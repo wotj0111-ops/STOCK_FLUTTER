@@ -26,23 +26,29 @@ jobs:
           channel: 'stable'
           cache: true
 
-      - name: Show versions
-        run: |
-          flutter --version
-          java -version
-
-      # ───────── 여기부터 새로 추가 (핵심) ─────────
-      # flutter create 로 android/ios/plugin 부수 파일을 자동 재생성.
-      # 이미 있는 파일은 건드리지 않으므로 안전.
       - name: Regenerate platform files
         run: flutter create --platforms=android --project-name stock_app .
 
       - name: Flutter pub get
         run: flutter pub get
 
-      - name: Analyze (non-blocking)
-        run: flutter analyze || true
-      # ──────────────────────────────────────────────
+      # ───── 아이콘 소스가 없으면 즉석에서 만들어서 사용 ─────
+      - name: Generate placeholder icon source
+        run: |
+          mkdir -p assets/icon
+          if [ ! -f assets/icon/icon.png ]; then
+            sudo apt-get update -qq && sudo apt-get install -y -qq imagemagick
+            # 인디고색 배경에 "$" 흰색 글자, 1024x1024 PNG 생성
+            convert -size 1024x1024 xc:'#3F51B5' \
+              -gravity center -pointsize 640 -fill white \
+              -font DejaVu-Sans-Bold -annotate +0+40 '\$' \
+              assets/icon/icon.png
+          fi
+          ls -la assets/icon
+
+      - name: Generate launcher icons
+        run: dart run flutter_launcher_icons
+      # ─────────────────────────────────────────────────────
 
       - name: Build release APK
         run: flutter build apk --release
