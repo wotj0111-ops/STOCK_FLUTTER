@@ -1,0 +1,81 @@
+plugins {
+    id "com.android.application"
+    id "kotlin-android"
+    id "dev.flutter.flutter-gradle-plugin"
+}
+
+def localProperties = new Properties()
+def localPropertiesFile = rootProject.file('local.properties')
+if (localPropertiesFile.exists()) {
+    localPropertiesFile.withReader('UTF-8') { reader ->
+        localProperties.load(reader)
+    }
+}
+
+def flutterVersionCode = localProperties.getProperty('flutter.versionCode') ?: '1'
+def flutterVersionName = localProperties.getProperty('flutter.versionName') ?: '1.0'
+
+android {
+    namespace "com.example.stock_app"
+    compileSdk 34
+    ndkVersion flutter.ndkVersion
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+
+    sourceSets {
+        main.java.srcDirs += 'src/main/kotlin'
+    }
+
+    defaultConfig {
+        applicationId "com.example.stock_app"
+        minSdk 23
+        targetSdk 34
+        versionCode flutterVersionCode.toInteger()
+        versionName flutterVersionName
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // 서명 설정:
+    //   1) 개인 배포: 아래 release 블록을 그대로 두면 debug 키로 서명한다.
+    //      → 본인 폰에 설치는 되지만, 다른 사람 배포에는 부적절.
+    //   2) 정식 릴리스: android/key.properties 를 만들고 keystore 경로/비번을 넣으면
+    //      자동으로 릴리스 서명으로 전환된다. (README 참고)
+    // ─────────────────────────────────────────────────────────────
+    def keyPropsFile = rootProject.file('key.properties')
+    def keyProps = new Properties()
+    if (keyPropsFile.exists()) {
+        keyProps.load(new FileInputStream(keyPropsFile))
+    }
+
+    signingConfigs {
+        release {
+            if (keyPropsFile.exists()) {
+                keyAlias keyProps['keyAlias']
+                keyPassword keyProps['keyPassword']
+                storeFile file(keyProps['storeFile'])
+                storePassword keyProps['storePassword']
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            signingConfig keyPropsFile.exists()
+                ? signingConfigs.release
+                : signingConfigs.debug
+            minifyEnabled false
+            shrinkResources false
+        }
+    }
+}
+
+flutter {
+    source '../..'
+}

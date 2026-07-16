@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  네이버 금융은 https 이므로 실제로는 cleartext 가 필요하지 않지만,
+  향후 사용자가 자체 API 서버(http)를 추가할 경우를 대비해 열어둔다.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system"/>
+        </trust-anchors>
+    </base-config>
+</network-security-config>
