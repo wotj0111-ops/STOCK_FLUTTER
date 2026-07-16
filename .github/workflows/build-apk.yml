@@ -1,11 +1,3 @@
-# 이 워크플로는 리포지토리에 push 하거나 GitHub 웹에서 "Run workflow" 버튼을 누르면
-# 자동으로 릴리스 APK 를 빌드하고 아티팩트로 첨부한다.
-# → Actions 탭 > 이 워크플로 > 최신 실행 > Artifacts > app-release.apk 를 다운로드하면
-#   폰에 바로 설치할 수 있는 APK 가 나온다.
-#
-# 서명은 debug 키로 이루어진다 (개인 사용용). 정식 배포를 하려면
-# key.properties + keystore 를 리포지토리 secrets 에 등록하고 이 파일을 수정할 것.
-
 name: Build Android APK
 
 on:
@@ -39,8 +31,18 @@ jobs:
           flutter --version
           java -version
 
+      # ───────── 여기부터 새로 추가 (핵심) ─────────
+      # flutter create 로 android/ios/plugin 부수 파일을 자동 재생성.
+      # 이미 있는 파일은 건드리지 않으므로 안전.
+      - name: Regenerate platform files
+        run: flutter create --platforms=android --project-name stock_app .
+
       - name: Flutter pub get
         run: flutter pub get
+
+      - name: Analyze (non-blocking)
+        run: flutter analyze || true
+      # ──────────────────────────────────────────────
 
       - name: Build release APK
         run: flutter build apk --release
