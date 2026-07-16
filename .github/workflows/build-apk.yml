@@ -1,0 +1,53 @@
+# 이 워크플로는 리포지토리에 push 하거나 GitHub 웹에서 "Run workflow" 버튼을 누르면
+# 자동으로 릴리스 APK 를 빌드하고 아티팩트로 첨부한다.
+# → Actions 탭 > 이 워크플로 > 최신 실행 > Artifacts > app-release.apk 를 다운로드하면
+#   폰에 바로 설치할 수 있는 APK 가 나온다.
+#
+# 서명은 debug 키로 이루어진다 (개인 사용용). 정식 배포를 하려면
+# key.properties + keystore 를 리포지토리 secrets 에 등록하고 이 파일을 수정할 것.
+
+name: Build Android APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.0'
+          channel: 'stable'
+          cache: true
+
+      - name: Show versions
+        run: |
+          flutter --version
+          java -version
+
+      - name: Flutter pub get
+        run: flutter pub get
+
+      - name: Build release APK
+        run: flutter build apk --release
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-release-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
