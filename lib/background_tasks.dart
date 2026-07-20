@@ -1,37 +1,59 @@
 import 'package:flutter/foundation.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:workmanager/workmanager.dart' as wm;
 
 import 'db.dart';
 import 'models.dart';
-import 'notification_service.dart';
 import 'scraper.dart';
 
 const String kStockBackgroundCheckTask = 'stockBackgroundCheckTask';
 
-/// 알림 조건: 저장된 알림가에 도달했는지 판정.
-/// - 알림가 >= 평단가  : 현재가가 알림가 이상으로 오르면 발동 (익절)
-/// - 알림가 <  평단가  : 현재가가 알림가 이하로 내리면 발동 (손절)
-/// - 평단가 미설정      : 현재가가 알림가에 도달만 하면 발동
 bool _shouldTrigger({
   required Ticker ticker,
-  required double currentPrice,
+  required int currentPrice,
 }) {
   final target = ticker.alertPrice;
   if (target == null) return false;
   final avg = ticker.avgPrice;
 
   if (avg == null) {
-    // 평단가가 없으면 목표가에 근접/도달만 확인
     return currentPrice >= target;
   }
-
   if (target >= avg) {
-    // 익절 알림
     return currentPrice >= target;
   } else {
-    // 손절 알림
     return currentPrice <= target;
   }
+}
+
+Future<void> _sendLocalAlert({
+  required Ticker ticker,
+  required int currentPrice,
+}) async {
+  final plugin = FlutterLocalNotificationsPlugin();
+
+  const androidInit = AndroidInitializationSettings('ic_notification');
+  const initSettings = InitializationSettings(android: androidInit);
+  await plugin.initialize(initSettings);
+
+  const androidDetails = AndroidNotificationDetails(
+    'stock_alerts',
+    '주식 알림',
+    channelDescription: '설정한 목표가 도달 시 알림',
+    importance: Importance.high,
+    priority: Priority.high,
+  );
+  const details = NotificationDetails(android: androidDetails);
+
+  final title = '${ticker.name} 목표가 도달';
+  final body = '현재가 $currentPrice / 목표가 ${ticker.alertPrice}';
+
+  await plugin.show(
+    ticker.code.hashCode & 0x7fffffff,
+    title,
+    body,
+    details,
+  );
 }
 
 @pragma('vm:entry-point')
@@ -44,9 +66,6 @@ void callbackDispatcher() {
 
       final db = AppDb.instance;
       final scraper = NaverFinanceScraper();
-      final notifier = NotificationService.instance;
-
-      await notifier.init();
 
       final List<Ticker> tickers = await db.listWatchlist();
 
@@ -64,7 +83,7 @@ void callbackDispatcher() {
                 ticker: t,
                 currentPrice: price.price,
               )) {
-            await notifier.showTargetReached(
+            await _sendLocalAlert(
               ticker: t,
               currentPrice: price.price,
             );
