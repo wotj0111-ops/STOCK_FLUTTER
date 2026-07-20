@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'background_tasks.dart';
 import 'notification_service.dart';
+import 'stock_catalog.dart';
 import 'ticker_list_page.dart';
 
 Future<void> main() async {
@@ -11,7 +12,10 @@ Future<void> main() async {
   await NotificationService.instance.init();
   await NotificationService.instance.requestPermissions();
 
-  // 백그라운드 작업 초기화 및 주기적 시세 체크 등록
+  // 종목 카탈로그 (번들 CSV 로드 + KRX 백그라운드 갱신)
+  await StockCatalog.instance.initialize();
+
+  // 백그라운드 시세 체크
   await BackgroundTasks.instance.initialize();
   await BackgroundTasks.instance.registerPeriodicSync();
 

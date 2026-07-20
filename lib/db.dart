@@ -5,6 +5,9 @@ import 'package:sqflite/sqflite.dart';
 import 'models.dart';
 
 /// 폰 내부 SQLite (sqflite) 저장소.
+/// - watchlist: 사용자가 추가한 종목 + 알림 설정
+/// - prices: 시계열 스냅샷
+/// - stocks: 종목 카탈로그 (번들 CSV + KRX 갱신)
 class AppDb {
   AppDb._();
   static final AppDb instance = AppDb._();
@@ -16,7 +19,7 @@ class AppDb {
     final path = p.join(dir.path, 'stock_data.db');
     _db = await openDatabase(
       path,
-      version: 3,
+      version: 4,
       onCreate: (db, v) async {
         await db.execute('''
           CREATE TABLE watchlist (
@@ -45,6 +48,15 @@ class AppDb {
         await db.execute(
           'CREATE INDEX idx_prices_code_ts ON prices(code, ts_kst)',
         );
+        await db.execute('''
+          CREATE TABLE stocks (
+            code TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            market TEXT,
+            updated_at TEXT NOT NULL
+          )
+        ''');
+        await db.execute('CREATE INDEX idx_stocks_name ON stocks(name)');
         await _seed(db);
       },
       onUpgrade: (db, oldVersion, newVersion) async {
@@ -62,6 +74,18 @@ class AppDb {
           await db.execute(
             "ALTER TABLE watchlist ADD COLUMN alert_direction TEXT NOT NULL DEFAULT 'above'",
           );
+        }
+        if (oldVersion < 4) {
+          await db.execute('''
+            CREATE TABLE IF NOT EXISTS stocks (
+              code TEXT PRIMARY KEY,
+              name TEXT NOT NULL,
+              market TEXT,
+              updated_at TEXT NOT NULL
+            )
+          ''');
+          await db.execute(
+              'CREATE INDEX IF NOT EXISTS idx_stocks_name ON stocks(name)');
         }
       },
     );
@@ -88,6 +112,7 @@ class AppDb {
     }
   }
 
+  // ───── watchlist ─────
   Future<List<Ticker>> listWatchlist() async {
     final rows = await (await db).query('watchlist', orderBy: 'added_at ASC');
     return rows.map((r) => Ticker.fromMap(r)).toList();
@@ -158,6 +183,7 @@ class AppDb {
     await (await db).delete('prices', where: 'code = ?', whereArgs: [code]);
   }
 
+  // ───── prices ─────
   Future<void> insertPrice(PricePoint p) async {
     await (await db).insert(
       'prices',
@@ -186,7 +212,52 @@ class AppDb {
       orderBy: 'ts_kst DESC',
       limit: limit,
     );
-    final list = rows.map(PricePoint.fromMap).toList();
-    return list.reversed.toList();
+    return rows.map(PricePoint.fromMap).toList().reversed.toList();
+  }
+
+  // ───── stocks (카탈로그) ─────
+  Future<int> stocksCount() async {
+    final r = await (await db).rawQuery('SELECT COUNT(*) c FROM stocks');
+    return (r.first['c'] as int?) ?? 0;
+  }
+
+  Future<void> bulkUpsertStocks(List<Map<String, Object?>> rows) async {
+    final d = await db;
+    final now = DateTime.now().toIso8601String();
+    final batch = d.batch();
+    for (final r in rows) {
+      batch.insert(
+        'stocks',
+        {
+          'code': r['code'],
+          'name': r['name'],
+          'market': r['market'],
+          'updated_at': now,
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    }
+    await batch.commit(noResult: true);
+  }
+
+  Future<List<Map<String, Object?>>> searchStocks(String q,
+      {int limit = 20}) async {
+    final d = await db;
+    final k = q.trim();
+    if (k.isEmpty) return [];
+    final like = '%$k%';
+    return d.rawQuery('''
+      SELECT code, name, market FROM stocks
+      WHERE name LIKE ? OR code LIKE ?
+      ORDER BY
+        CASE
+          WHEN name = ? THEN 0
+          WHEN name LIKE ? THEN 1
+          WHEN name LIKE ? THEN 2
+          ELSE 3
+        END,
+        name ASC
+      LIMIT ?
+    ''', [like, like, k, '$k%', like, limit]);
   }
 }

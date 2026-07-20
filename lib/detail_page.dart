@@ -158,7 +158,7 @@ class _DetailPageState extends State<DetailPage> with WidgetsBindingObserver {
           const SizedBox(height: 16),
           _alertCard(theme),
           const SizedBox(height: 16),
-          NewsSection(code: _t.code, name: _t.name),
+          NewsSection(code: _t.code),
         ],
       ),
     );

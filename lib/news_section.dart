@@ -7,8 +7,7 @@ import 'read_history_store.dart';
 
 class NewsSection extends StatefulWidget {
   final String code;
-  final String name;
-  const NewsSection({super.key, required this.code, required this.name});
+  const NewsSection({super.key, required this.code});
 
   @override
   State<NewsSection> createState() => _NewsSectionState();
@@ -38,7 +37,7 @@ class _NewsSectionState extends State<NewsSection> {
     });
     try {
       final results = await Future.wait([
-        _svc.fetch(widget.name),
+        _svc.fetch(widget.code),
         _store.allRead(),
       ]);
       if (!mounted) return;
@@ -59,23 +58,7 @@ class _NewsSectionState extends State<NewsSection> {
   Future<void> _openUrl(StockNews n) async {
     final uri = Uri.tryParse(n.url);
     if (uri == null) return;
-
-    // Google News 리다이렉트 URL은 브라우저에서 자동으로 언론사 원문으로 이동.
-    // 인앱 브라우저를 우선 사용 → 어떤 안드로이드 딥링크도 가로채지 못함.
-    bool ok = false;
-    try {
-      ok = await launchUrl(uri, mode: LaunchMode.inAppBrowserView);
-    } catch (_) {
-      ok = false;
-    }
-    if (!ok) {
-      try {
-        ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
-      } catch (_) {
-        ok = false;
-      }
-    }
-
+    final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
     if (ok) {
       await _store.markRead(n.url);
       if (!mounted) return;
@@ -360,9 +343,7 @@ class _NewsSectionState extends State<NewsSection> {
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        [n.source, if (date.isNotEmpty) date]
-                            .where((e) => e.isNotEmpty)
-                            .join(' · '),
+                        [n.source, if (date.isNotEmpty) date].join(' · '),
                         style: theme.textTheme.bodySmall
                             ?.copyWith(color: theme.hintColor),
                       ),

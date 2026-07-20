@@ -8,6 +8,7 @@ import 'db.dart';
 import 'detail_page.dart';
 import 'models.dart';
 import 'scraper.dart';
+import 'stock_catalog.dart';
 
 class TickerListPage extends StatefulWidget {
   const TickerListPage({super.key});
@@ -85,9 +86,7 @@ class _TickerListPageState extends State<TickerListPage>
           await sendLocalAlert(ticker: t, currentPrice: p.price);
           await _db.markAlertTriggered(t.code, true);
         }
-        if (mounted) {
-          setState(() => _prices[t.code] = p);
-        }
+        if (mounted) setState(() => _prices[t.code] = p);
       } catch (_) {}
     }
   }
@@ -111,13 +110,11 @@ class _TickerListPageState extends State<TickerListPage>
         content: Text('${t.name}(${t.code}) 을(를) 삭제하시겠어요?'),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('취소'),
-          ),
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('취소')),
           FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('삭제'),
-          ),
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('삭제')),
         ],
       ),
     );
@@ -136,10 +133,9 @@ class _TickerListPageState extends State<TickerListPage>
         centerTitle: false,
         actions: [
           IconButton(
-            onPressed: _pollOnce,
-            tooltip: '지금 갱신',
-            icon: const Icon(Icons.refresh),
-          ),
+              onPressed: _pollOnce,
+              tooltip: '지금 갱신',
+              icon: const Icon(Icons.refresh)),
         ],
       ),
       floatingActionButton: FloatingActionButton.extended(
@@ -163,23 +159,20 @@ class _TickerListPageState extends State<TickerListPage>
     );
   }
 
-  Widget _emptyState(ThemeData theme) {
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(Icons.trending_up, size: 64, color: theme.disabledColor),
-          const SizedBox(height: 12),
-          Text('등록된 종목이 없습니다',
-              style: theme.textTheme.titleMedium),
-          const SizedBox(height: 4),
-          Text('아래 + 버튼으로 관심 종목을 추가해 보세요.',
-              style: theme.textTheme.bodyMedium
-                  ?.copyWith(color: theme.hintColor)),
-        ],
-      ),
-    );
-  }
+  Widget _emptyState(ThemeData theme) => Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.trending_up, size: 64, color: theme.disabledColor),
+            const SizedBox(height: 12),
+            Text('등록된 종목이 없습니다', style: theme.textTheme.titleMedium),
+            const SizedBox(height: 4),
+            Text('아래 + 버튼으로 관심 종목을 추가해 보세요.',
+                style: theme.textTheme.bodyMedium
+                    ?.copyWith(color: theme.hintColor)),
+          ],
+        ),
+      );
 
   Widget _tickerCard(Ticker t) {
     final theme = Theme.of(context);
@@ -214,35 +207,27 @@ class _TickerListPageState extends State<TickerListPage>
               CircleAvatar(
                 radius: 22,
                 backgroundColor: theme.colorScheme.primaryContainer,
-                child: Text(
-                  t.name.characters.first,
-                  style: TextStyle(
-                    color: theme.colorScheme.onPrimaryContainer,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
+                child: Text(t.name.characters.first,
+                    style: TextStyle(
+                        color: theme.colorScheme.onPrimaryContainer,
+                        fontWeight: FontWeight.bold)),
               ),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
-                      children: [
-                        Flexible(
-                          child: Text(
-                            t.name,
-                            style: theme.textTheme.titleMedium
-                                ?.copyWith(fontWeight: FontWeight.w600),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                        const SizedBox(width: 6),
-                        Text(t.code,
-                            style: theme.textTheme.bodySmall
-                                ?.copyWith(color: theme.hintColor)),
-                      ],
-                    ),
+                    Row(children: [
+                      Flexible(
+                          child: Text(t.name,
+                              style: theme.textTheme.titleMedium
+                                  ?.copyWith(fontWeight: FontWeight.w600),
+                              overflow: TextOverflow.ellipsis)),
+                      const SizedBox(width: 6),
+                      Text(t.code,
+                          style: theme.textTheme.bodySmall
+                              ?.copyWith(color: theme.hintColor)),
+                    ]),
                     const SizedBox(height: 4),
                     if (t.alertEnabled && t.alertPrice != null)
                       _alertBadge(t)
@@ -257,21 +242,17 @@ class _TickerListPageState extends State<TickerListPage>
               Column(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
-                  Text(
-                    p == null ? '-' : '${_won.format(p.price)}원',
-                    style: theme.textTheme.titleMedium?.copyWith(
-                      color: priceColor,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
+                  Text(p == null ? '-' : '${_won.format(p.price)}원',
+                      style: theme.textTheme.titleMedium?.copyWith(
+                          color: priceColor, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 2),
                   Text(
-                    p == null
-                        ? ''
-                        : '${p.change >= 0 ? '+' : ''}${_won.format(p.change)}'
-                            ' (${p.changePct.toStringAsFixed(2)}%)',
-                    style: theme.textTheme.bodySmall?.copyWith(color: priceColor),
-                  ),
+                      p == null
+                          ? ''
+                          : '${p.change >= 0 ? '+' : ''}${_won.format(p.change)}'
+                              ' (${p.changePct.toStringAsFixed(2)}%)',
+                      style: theme.textTheme.bodySmall
+                          ?.copyWith(color: priceColor)),
                 ],
               ),
             ],
@@ -289,9 +270,8 @@ class _TickerListPageState extends State<TickerListPage>
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(20),
-      ),
+          color: color.withOpacity(0.1),
+          borderRadius: BorderRadius.circular(20)),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -309,11 +289,10 @@ class _TickerListPageState extends State<TickerListPage>
   }
 }
 
-/// 종목 추가 다이얼로그 (코드/이름 스마트 검색 · 부분일치 · 진단 스낵바)
+/// 종목 추가 다이얼로그 — 100% 로컬 검색 + KRX 수동 갱신 버튼
 class _AddTickerDialog extends StatefulWidget {
   final NaverFinanceScraper scraper;
   const _AddTickerDialog({required this.scraper});
-
   @override
   State<_AddTickerDialog> createState() => _AddTickerDialogState();
 }
@@ -323,7 +302,20 @@ class _AddTickerDialogState extends State<_AddTickerDialog> {
   Timer? _debounce;
   List<Ticker> _results = [];
   bool _searching = false;
-  String? _lastDiag;
+  DateTime? _lastRefreshed;
+  bool _refreshing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadLastRefreshed();
+  }
+
+  Future<void> _loadLastRefreshed() async {
+    final t = await StockCatalog.instance.lastRefreshed();
+    if (!mounted) return;
+    setState(() => _lastRefreshed = t);
+  }
 
   @override
   void dispose() {
@@ -334,59 +326,41 @@ class _AddTickerDialogState extends State<_AddTickerDialog> {
 
   void _onChanged(String v) {
     _debounce?.cancel();
-    _debounce = Timer(const Duration(milliseconds: 350), () async {
+    _debounce = Timer(const Duration(milliseconds: 200), () async {
       final q = v.trim();
       if (q.isEmpty) {
-        setState(() {
-          _results = [];
-          _lastDiag = null;
-        });
+        setState(() => _results = []);
         return;
       }
-      setState(() {
-        _searching = true;
-        _lastDiag = null;
-      });
-
-      List<Ticker> list;
-      List<SearchDiag> diags = const [];
-
-      // 6자리 숫자 → 코드 검색, 그 외 → 이름(부분일치) 3단계 폴백
-      if (RegExp(r'^\d{6}$').hasMatch(q)) {
-        final n = await widget.scraper.lookupName(q);
-        list = n == null ? <Ticker>[] : [Ticker(code: q, name: n)];
-      } else {
-        final r = await widget.scraper.searchByNameDiag(q);
-        list = r.items;
-        diags = r.diags;
-      }
-
+      setState(() => _searching = true);
+      final list = await widget.scraper.smartSearch(q);
       if (!mounted) return;
       setState(() {
         _results = list;
         _searching = false;
-        _lastDiag = (list.isEmpty && diags.isNotEmpty)
-            ? diags.map((d) => d.toString()).join(' | ')
-            : null;
       });
-
-      // 실기기 진단: 결과가 비었을 때만 스낵바로 노출
-      if (_lastDiag != null && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            duration: const Duration(seconds: 8),
-            content: Text('검색 진단: $_lastDiag'),
-            action: SnackBarAction(
-              label: '복사',
-              onPressed: () {
-                // 클립보드 복사는 flutter/services 없이 SnackBar 유지 목적으로 생략.
-                // 필요 시 Clipboard.setData 로 확장 가능.
-              },
-            ),
-          ),
-        );
-      }
     });
+  }
+
+  Future<void> _refreshCatalog() async {
+    setState(() => _refreshing = true);
+    final ok = await StockCatalog.instance.refreshNow();
+    if (!mounted) return;
+    setState(() => _refreshing = false);
+    await _loadLastRefreshed();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+          content:
+              Text(ok ? '종목 목록을 최신으로 갱신했습니다.' : '갱신에 실패했습니다.')),
+    );
+    if (_ctl.text.isNotEmpty) _onChanged(_ctl.text);
+  }
+
+  String _refreshLabel() {
+    if (_refreshing) return '갱신 중...';
+    if (_lastRefreshed == null) return '종목 목록 갱신 (KRX)';
+    final f = DateFormat('MM/dd HH:mm');
+    return '마지막 갱신: ${f.format(_lastRefreshed!)}';
   }
 
   @override
@@ -410,32 +384,33 @@ class _AddTickerDialogState extends State<_AddTickerDialog> {
                 border: OutlineInputBorder(),
               ),
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                    child: Text(_refreshLabel(),
+                        style: theme.textTheme.bodySmall
+                            ?.copyWith(color: theme.hintColor))),
+                TextButton.icon(
+                  onPressed: _refreshing ? null : _refreshCatalog,
+                  icon: const Icon(Icons.sync, size: 18),
+                  label: const Text('갱신'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
             SizedBox(
               height: 260,
               child: _searching
                   ? const Center(child: CircularProgressIndicator())
                   : _results.isEmpty
                       ? Center(
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              const Text('검색 결과가 없습니다.'),
-                              if (_lastDiag != null) ...[
-                                const SizedBox(height: 8),
-                                Padding(
-                                  padding:
-                                      const EdgeInsets.symmetric(horizontal: 12),
-                                  child: Text(
-                                    _lastDiag!,
-                                    textAlign: TextAlign.center,
-                                    style: theme.textTheme.bodySmall
-                                        ?.copyWith(color: theme.hintColor),
-                                  ),
-                                ),
-                              ],
-                            ],
-                          ),
+                          child: Text(
+                              _ctl.text.isEmpty
+                                  ? '검색어를 입력하세요.'
+                                  : '검색 결과가 없습니다.',
+                              style: theme.textTheme.bodyMedium
+                                  ?.copyWith(color: theme.hintColor)),
                         )
                       : ListView.separated(
                           itemCount: _results.length,
@@ -457,9 +432,8 @@ class _AddTickerDialogState extends State<_AddTickerDialog> {
       ),
       actions: [
         TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('취소'),
-        ),
+            onPressed: () => Navigator.pop(context),
+            child: const Text('취소')),
       ],
     );
   }

@@ -1,72 +1,71 @@
-# 내 주식 대시보드 (stock_app)
+# 내 주식 대시보드 (stock_app) v0.6.0
 
 네이버 금융을 파싱해 관심 종목의 시세를 모바일에서 확인하고,
 목표가 도달 시 로컬 알림을 받는 개인용 Flutter 앱입니다.
+
+## v0.6.0 주요 변경 (2026-07-20)
+
+- **종목 검색 하이브리드 개편**
+  - `assets/stocks.csv` 번들 스냅샷으로 초기 검색 즉시 동작 (오프라인 지원)
+  - 앱 첫 실행/주 1회 KRX 공식 상장법인목록 자동 갱신
+  - 검색 다이얼로그에 “마지막 갱신 시각” 표시 + 수동 갱신 버튼
+  - 폐기된 3개 네이버 API 경로 제거
 
 ## 주요 기능
 
 - **관심 종목 관리**
   - 6자리 코드 검색 (예: `005930`)
-  - 회사명 검색 (예: `삼성전자`) — 네이버 자동완성 API 사용
-- **10초 폴링 실시간 갱신** (앱이 켜져 있을 때만)
-  - 백그라운드 진입 시 자동 중지 → 배터리 소모 없음
+  - 종목명 부분일치 검색 (예: `삼성`, `카카오`)
+  - KRX 갱신으로 신규 상장 종목 자동 반영
+- **10초 폴링 실시간 시세** (앱 켜짐 상태)
+  - 백그라운드 진입 시 자동 중지 → 배터리 절약
 - **가격 알림**
-  - 상승 도달 알림 / 하락 도달 알림 선택
-  - 평단가는 참고용 입력 (검증 없음)
+  - 상승 / 하락 도달 조건 선택
   - 앱 종료 상태에서도 WorkManager 15분 주기 체크
-- **관련 뉴스 요약**
-  - 상세창에서 최근 뉴스 최대 12건 표시
-  - 헤드라인 + 상위 키워드 자동 추출
-  - 키워드 칩 필터, NEW 뱃지, 읽음 처리, 회색 처리
-  - 링크 탭 → 기본 브라우저로 즉시 열기
+- **관련 뉴스**
+  - Google News RSS 기반 UTF-8 뉴스
+  - 인앱 브라우저로 원문 열기 (네이버 앱 딥링크 회피)
+  - 읽음 처리, NEW 뱃지, 키워드 필터
 
 ## 스택
 
 - Flutter 3.24 / Dart 3.3+
-- SQLite (sqflite) — 로컬 저장
-- `flutter_local_notifications` — 알림
-- `workmanager` — 백그라운드 주기 작업
-- `url_launcher` — 외부 브라우저 실행
-- `shared_preferences` — 뉴스 열람 이력 저장
+- SQLite (sqflite)
+- flutter_local_notifications, workmanager
+- url_launcher, shared_preferences
 
-## 빌드 방법
+## 빌드
 
-### 자동 (권장) — GitHub Actions
-1. 이 프로젝트를 GitHub 저장소에 push
-2. Actions 탭 → **Build Android APK** 워크플로 실행
-3. Artifacts 에서 `app-release.apk` 다운로드
-
-### 로컬
 ```bash
 flutter pub get
 flutter build apk --release
-# 결과: build/app/outputs/flutter-apk/app-release.apk
 ```
+
+GitHub Actions로 자동 빌드도 지원합니다 (`.github/workflows/build-apk.yml`).
 
 ## 프로젝트 구조
 
 ```
 lib/
-├── main.dart               # 앱 진입점 + 초기화
-├── models.dart             # Ticker, PricePoint, AlertDirection
-├── db.dart                 # SQLite 저장소 (v3)
-├── scraper.dart            # 네이버 금융 크롤러 + 자동완성
-├── news_service.dart       # 뉴스 파서 + 키워드 추출
-├── read_history_store.dart # 뉴스 읽음 이력 (SharedPreferences)
+├── main.dart               # 진입점 (알림·카탈로그·백그라운드 초기화)
+├── models.dart             # Ticker / PricePoint / AlertDirection
+├── db.dart                 # SQLite v4 (watchlist/prices/stocks)
+├── stock_catalog.dart      # 카탈로그: 번들 CSV + KRX 갱신
+├── scraper.dart            # 시세 크롤러 + 검색 파사드
 ├── notification_service.dart
-├── background_tasks.dart   # WorkManager 백그라운드
-├── ticker_list_page.dart   # 목록 화면 (실시간 카드)
-├── detail_page.dart        # 상세 화면 (가격/알림/뉴스)
-└── news_section.dart       # 뉴스 카드 위젯
+├── background_tasks.dart   # WorkManager 15분 주기
+├── news_service.dart       # Google News RSS
+├── read_history_store.dart
+├── news_section.dart
+├── ticker_list_page.dart
+└── detail_page.dart
+assets/
+└── stocks.csv              # 초기 종목 목록 스냅샷
 ```
 
 ## 주의사항
 
-- 네이버 금융은 **공식 API가 아닙니다**. 개인 학습/모니터링 용도로만 사용하세요.
-- 요청은 자동으로 최소 10초 간격으로 이루어져야 합니다.
-- 앱 종료 상태의 알림은 Android WorkManager 특성상 **최소 15분 주기**입니다.
+- 네이버 금융 시세는 공식 API가 아니므로 개인 학습/모니터링 용도로만 사용하세요.
+- 앱 종료 상태의 알림은 Android WorkManager 특성상 최소 15분 주기입니다.
+- 실시간 초 단위 알림은 폰이 켜져 있고 앱이 포그라운드일 때만 동작합니다.
 - iOS 지원은 별도 macOS + Apple Developer 계정이 필요합니다.
-
-## 라이선스
-
-개인 학습용 프로젝트입니다.
