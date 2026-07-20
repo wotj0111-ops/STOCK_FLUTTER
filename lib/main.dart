@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:workmanager/workmanager.dart';
 
+import 'background_tasks.dart';
 import 'notification_service.dart';
 import 'ticker_list_page.dart';
 
@@ -7,6 +9,8 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await NotificationService.instance.init();
   await NotificationService.instance.requestPermissions();
+  await Workmanager().initialize(callbackDispatcher, isInDebugMode: false);
+  await BackgroundTasks.instance.registerPeriodicSync();
   runApp(const StockApp());
 }
 
