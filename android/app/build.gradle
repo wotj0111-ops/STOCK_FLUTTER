@@ -13,14 +13,10 @@ if (localPropertiesFile.exists()) {
 }
 
 def flutterVersionCode = localProperties.getProperty('flutter.versionCode')
-if (flutterVersionCode == null) {
-    flutterVersionCode = '1'
-}
+if (flutterVersionCode == null) { flutterVersionCode = '1' }
 
 def flutterVersionName = localProperties.getProperty('flutter.versionName')
-if (flutterVersionName == null) {
-    flutterVersionName = '1.0'
-}
+if (flutterVersionName == null) { flutterVersionName = '1.0' }
 
 def keystoreProperties = new Properties()
 def keystorePropertiesFile = rootProject.file('key.properties')
@@ -33,23 +29,15 @@ if (keystorePropertiesFile.exists()) {
 android {
     namespace "com.example.stock_app"
     compileSdkVersion 34
-
     ndkVersion "25.1.8937393"
 
-    // ✅ 이번 오류의 핵심 수정: core library desugaring 활성화
     compileOptions {
         coreLibraryDesugaringEnabled true
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
-
-    kotlinOptions {
-        jvmTarget = '17'
-    }
-
-    sourceSets {
-        main.java.srcDirs += 'src/main/kotlin'
-    }
+    kotlinOptions { jvmTarget = '17' }
+    sourceSets { main.java.srcDirs += 'src/main/kotlin' }
 
     defaultConfig {
         applicationId "com.example.stock_app"
@@ -79,19 +67,13 @@ android {
             minifyEnabled false
             shrinkResources false
         }
-        debug {
-            signingConfig signingConfigs.debug
-        }
+        debug { signingConfig signingConfigs.debug }
     }
 }
 
-flutter {
-    source '../..'
-}
+flutter { source '../..' }
 
 dependencies {
     implementation "org.jetbrains.kotlin:kotlin-stdlib:1.9.10"
-
-    // ✅ 이번 오류의 핵심 수정: desugar 라이브러리 추가
     coreLibraryDesugaring "com.android.tools:desugar_jdk_libs:2.0.4"
 }

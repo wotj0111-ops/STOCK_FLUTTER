@@ -4,17 +4,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 
-import 'alert_logic.dart';
+import 'background_tasks.dart';
 import 'db.dart';
 import 'models.dart';
+import 'news_section.dart';
 import 'scraper.dart';
 
-/// 종목 상세 화면.
-///
-/// 기존 차트/표 중심 화면 대신:
-/// - 현재가 요약 카드
-/// - 평단가 / 목표가 / 알림 on-off 설정 UI
-/// 를 중심으로 재구성한다.
 class DetailPage extends StatefulWidget {
   final Ticker ticker;
   const DetailPage({super.key, required this.ticker});
@@ -23,315 +18,337 @@ class DetailPage extends StatefulWidget {
   State<DetailPage> createState() => _DetailPageState();
 }
 
-class _DetailPageState extends State<DetailPage> {
-  final _fmt = NumberFormat('#,##0');
+class _DetailPageState extends State<DetailPage> with WidgetsBindingObserver {
+  final _db = AppDb.instance;
   final _scraper = NaverFinanceScraper();
+  final _won = NumberFormat('#,###');
 
-  final _avgCtrl = TextEditingController();
-  final _targetCtrl = TextEditingController();
+  late TextEditingController _avgCtl;
+  late TextEditingController _alertCtl;
 
-  Ticker? _ticker;
+  Ticker _t = const Ticker(code: '', name: '');
   PricePoint? _price;
-  Timer? _timer;
-  bool _loading = true;
-  bool _saving = false;
-  String? _error;
-  bool _alertEnabled = false;
+  AlertDirection _direction = AlertDirection.above;
+  bool _enabled = false;
+
+  Timer? _pollTimer;
+  static const _pollInterval = Duration(seconds: 10);
 
   @override
   void initState() {
     super.initState();
-    _ticker = widget.ticker;
-    _syncControllers(widget.ticker);
-    _refresh();
-    _timer = Timer.periodic(const Duration(minutes: 1), (_) => _refresh());
+    WidgetsBinding.instance.addObserver(this);
+    _t = widget.ticker;
+    _direction = _t.alertDirection;
+    _enabled = _t.alertEnabled;
+    _avgCtl = TextEditingController(text: _t.avgPrice?.toString() ?? '');
+    _alertCtl = TextEditingController(text: _t.alertPrice?.toString() ?? '');
+    _startPolling();
   }
 
   @override
   void dispose() {
-    _timer?.cancel();
-    _avgCtrl.dispose();
-    _targetCtrl.dispose();
+    WidgetsBinding.instance.removeObserver(this);
+    _stopPolling();
+    _avgCtl.dispose();
+    _alertCtl.dispose();
     super.dispose();
   }
 
-  void _syncControllers(Ticker t) {
-    _avgCtrl.text = t.avgPrice?.toString() ?? '';
-    _targetCtrl.text = t.alertPrice?.toString() ?? '';
-    _alertEnabled = t.alertEnabled;
-  }
-
-  Future<void> _refresh() async {
-    try {
-      final latestTicker = await AppDb.instance.getTicker(widget.ticker.code) ?? widget.ticker;
-      final previous = await AppDb.instance.latestPrice(widget.ticker.code);
-      final fetched = await _scraper.fetchOne(latestTicker);
-      if (fetched != null) {
-        await AppDb.instance.insertPrice(fetched);
-      }
-      final current = fetched ?? previous;
-      if (!mounted) return;
-      setState(() {
-        _ticker = latestTicker;
-        _price = current;
-        _loading = false;
-        _error = current == null ? '데이터를 불러올 수 없습니다. 잠시 후 다시 시도하세요.' : null;
-      });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _loading = false;
-        _error = e.toString();
-      });
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _startPolling();
+    } else {
+      _stopPolling();
     }
   }
 
-  int? _parseInt(String text) {
-    final cleaned = text.replaceAll(RegExp(r'[^\d]'), '');
-    if (cleaned.isEmpty) return null;
-    return int.tryParse(cleaned);
+  void _startPolling() {
+    _pollTimer?.cancel();
+    _pollOnce();
+    _pollTimer = Timer.periodic(_pollInterval, (_) => _pollOnce());
   }
 
-  Future<void> _saveAlertSettings() async {
-    final avg = _parseInt(_avgCtrl.text);
-    final target = _parseInt(_targetCtrl.text);
+  void _stopPolling() {
+    _pollTimer?.cancel();
+    _pollTimer = null;
+  }
 
-    if (_alertEnabled && (avg == null || target == null)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('알림을 켜려면 평단가와 목표가를 모두 입력하세요.')),
-      );
+  Future<void> _pollOnce() async {
+    try {
+      final p = await _scraper.fetchOne(_t);
+      if (p == null) return;
+      await _db.insertPrice(p);
+      if (!mounted) return;
+      setState(() => _price = p);
+    } catch (_) {}
+  }
+
+  Future<void> _save() async {
+    final alertText = _alertCtl.text.trim();
+    if (_enabled && alertText.isEmpty) {
+      _snack('알림 가격을 입력해 주세요.');
+      return;
+    }
+    final alertPrice = alertText.isEmpty ? null : int.tryParse(alertText);
+    final avgPrice =
+        _avgCtl.text.trim().isEmpty ? null : int.tryParse(_avgCtl.text.trim());
+
+    if (_enabled && alertPrice == null) {
+      _snack('알림 가격은 숫자만 입력 가능합니다.');
       return;
     }
 
-    setState(() => _saving = true);
-    await AppDb.instance.updateAlertSettings(
-      code: widget.ticker.code,
-      avgPrice: avg,
-      alertPrice: target,
-      alertEnabled: _alertEnabled && avg != null && target != null,
+    await _db.updateAlertSettings(
+      code: _t.code,
+      avgPrice: avgPrice,
+      alertPrice: alertPrice,
+      alertEnabled: _enabled,
+      alertDirection: _direction,
     );
-
-    final updated = await AppDb.instance.getTicker(widget.ticker.code);
+    final updated = await _db.getTicker(_t.code);
     if (!mounted) return;
-    setState(() {
-      _ticker = updated ?? _ticker;
-      _saving = false;
-    });
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('알림 설정이 저장되었습니다.')),
-    );
+    setState(() => _t = updated ?? _t);
+    _snack('알림 설정이 저장되었습니다.');
   }
 
-  Future<void> _clearAlertSettings() async {
-    setState(() => _saving = true);
-    await AppDb.instance.updateAlertSettings(
-      code: widget.ticker.code,
+  Future<void> _reset() async {
+    await _db.updateAlertSettings(
+      code: _t.code,
       avgPrice: null,
       alertPrice: null,
       alertEnabled: false,
+      alertDirection: AlertDirection.above,
     );
-    final updated = await AppDb.instance.getTicker(widget.ticker.code);
     if (!mounted) return;
     setState(() {
-      _ticker = updated ?? _ticker;
-      _syncControllers(_ticker!);
-      _saving = false;
+      _enabled = false;
+      _direction = AlertDirection.above;
+      _avgCtl.clear();
+      _alertCtl.clear();
     });
+    _snack('알림 설정이 초기화되었습니다.');
+  }
+
+  void _snack(String msg) {
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('알림 설정을 초기화했습니다.')),
+      SnackBar(content: Text(msg)),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    final ticker = _ticker ?? widget.ticker;
+    final theme = Theme.of(context);
     return Scaffold(
       appBar: AppBar(
-        title: Text('${ticker.name} · ${ticker.code}'),
+        title: Text(_t.name),
         actions: [
-          IconButton(icon: const Icon(Icons.refresh), onPressed: _refresh),
+          IconButton(
+            onPressed: _pollOnce,
+            tooltip: '지금 갱신',
+            icon: const Icon(Icons.refresh),
+          ),
         ],
       ),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : RefreshIndicator(
-              onRefresh: _refresh,
-              child: ListView(
-                padding: const EdgeInsets.all(16),
-                children: [
-                  if (_error != null)
-                    Card(
-                      color: Colors.orange.shade100,
-                      child: Padding(
-                        padding: const EdgeInsets.all(12),
-                        child: Text(_error!),
-                      ),
-                    ),
-                  if (_price != null) _headerCard(_price!, ticker),
-                  const SizedBox(height: 16),
-                  _alertCard(ticker),
-                ],
-              ),
-            ),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          _priceCard(theme),
+          const SizedBox(height: 16),
+          _alertCard(theme),
+          const SizedBox(height: 16),
+          NewsSection(code: _t.code),
+        ],
+      ),
     );
   }
 
-  Widget _headerCard(PricePoint p, Ticker ticker) {
-    final positive = p.change > 0;
-    final negative = p.change < 0;
-    final color = positive ? Colors.red : (negative ? Colors.blue : Colors.grey);
+  Widget _priceCard(ThemeData theme) {
+    final p = _price;
+    final isUp = (p?.change ?? 0) > 0;
+    final isDown = (p?.change ?? 0) < 0;
+    final color = isUp
+        ? Colors.red.shade600
+        : isDown
+            ? Colors.blue.shade600
+            : theme.colorScheme.onSurface;
 
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(p.name, style: Theme.of(context).textTheme.titleLarge),
-            const SizedBox(height: 4),
-            Text(
-              DateFormat('yyyy-MM-dd HH:mm:ss').format(p.tsKst),
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-            const SizedBox(height: 16),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Text(
-                  '${_fmt.format(p.price)}원',
-                  style: const TextStyle(fontSize: 32, fontWeight: FontWeight.bold),
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(20),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            theme.colorScheme.primaryContainer.withOpacity(0.4),
+            theme.colorScheme.primaryContainer.withOpacity(0.1),
+          ],
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Text(_t.name,
+                  style: theme.textTheme.titleLarge
+                      ?.copyWith(fontWeight: FontWeight.bold)),
+              const SizedBox(width: 8),
+              Text(_t.code,
+                  style: theme.textTheme.bodyMedium
+                      ?.copyWith(color: theme.hintColor)),
+              const Spacer(),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: Colors.green.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(20),
                 ),
-                const SizedBox(width: 12),
-                Text(
-                  '${p.change >= 0 ? '+' : ''}${_fmt.format(p.change)} '
-                  '(${p.changePct.toStringAsFixed(2)}%)',
-                  style: TextStyle(color: color, fontSize: 16),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                _infoChip('거래량', p.volume != null ? '${_fmt.format(p.volume)}' : '-'),
-                _infoChip('평단가', formattedWon(ticker.avgPrice)),
-                _infoChip('목표가', formattedWon(ticker.alertPrice)),
-                _infoChip('알림유형', alertModeText(ticker)),
-              ],
-            ),
-            if (ticker.avgPrice != null) ...[
-              const SizedBox(height: 12),
-              Text(
-                '현재 수익률 기준: ${profitText(currentPrice: p.price, avgPrice: ticker.avgPrice!)}',
-                style: TextStyle(
-                  color: p.price >= ticker.avgPrice! ? Colors.red : Colors.blue,
-                  fontWeight: FontWeight.w600,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 6,
+                      height: 6,
+                      decoration: const BoxDecoration(
+                          shape: BoxShape.circle, color: Colors.green),
+                    ),
+                    const SizedBox(width: 4),
+                    const Text('실시간', style: TextStyle(fontSize: 11)),
+                  ],
                 ),
               ),
             ],
+          ),
+          const SizedBox(height: 18),
+          Text(
+            p == null ? '-' : '${_won.format(p.price)}원',
+            style: theme.textTheme.displaySmall?.copyWith(
+              color: color,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            p == null
+                ? '데이터를 불러오는 중...'
+                : '${p.change >= 0 ? '+' : ''}${_won.format(p.change)}'
+                    '  (${p.changePct.toStringAsFixed(2)}%)',
+            style: theme.textTheme.titleMedium?.copyWith(color: color),
+          ),
+          if (p != null) ...[
+            const SizedBox(height: 12),
+            Text(
+              '거래량: ${p.volume == null ? '-' : _won.format(p.volume)}',
+              style: theme.textTheme.bodySmall?.copyWith(color: theme.hintColor),
+            ),
+            Text(
+              '업데이트: ${DateFormat('HH:mm:ss').format(p.tsKst)}',
+              style: theme.textTheme.bodySmall?.copyWith(color: theme.hintColor),
+            ),
           ],
-        ),
+        ],
       ),
     );
   }
 
-  Widget _alertCard(Ticker ticker) {
-    final avg = _parseInt(_avgCtrl.text);
-    final target = _parseInt(_targetCtrl.text);
-    final mode = (avg != null && target != null)
-        ? (target >= avg ? '익절 알림' : '손절 알림')
-        : '미설정';
-    final price = _price;
-    final reached = price != null && avg != null && target != null
-        ? (target >= avg ? price.price >= target : price.price <= target)
-        : false;
-
+  Widget _alertCard(ThemeData theme) {
     return Card(
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(20),
+        side: BorderSide(color: theme.dividerColor.withOpacity(0.6)),
+      ),
       child: Padding(
-        padding: const EdgeInsets.all(20),
+        padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               children: [
-                const Icon(Icons.notifications_active_outlined),
+                Icon(Icons.notifications_active,
+                    color: theme.colorScheme.primary),
                 const SizedBox(width: 8),
-                Text('알림 설정', style: Theme.of(context).textTheme.titleMedium),
+                Text('알림 설정',
+                    style: theme.textTheme.titleMedium
+                        ?.copyWith(fontWeight: FontWeight.bold)),
                 const Spacer(),
                 Switch(
-                  value: _alertEnabled,
-                  onChanged: (v) => setState(() => _alertEnabled = v),
+                  value: _enabled,
+                  onChanged: (v) => setState(() => _enabled = v),
                 ),
               ],
             ),
             const SizedBox(height: 12),
             TextField(
-              controller: _avgCtrl,
+              controller: _avgCtl,
               keyboardType: TextInputType.number,
               inputFormatters: [FilteringTextInputFormatter.digitsOnly],
               decoration: const InputDecoration(
-                labelText: '나의 평단가',
-                hintText: '예: 73500',
+                labelText: '평단가 (선택)',
+                hintText: '참고용 · 필수 아님',
+                prefixIcon: Icon(Icons.savings_outlined),
                 border: OutlineInputBorder(),
-                suffixText: '원',
               ),
-              onChanged: (_) => setState(() {}),
             ),
             const SizedBox(height: 12),
             TextField(
-              controller: _targetCtrl,
+              controller: _alertCtl,
               keyboardType: TextInputType.number,
               inputFormatters: [FilteringTextInputFormatter.digitsOnly],
               decoration: const InputDecoration(
-                labelText: '알람 목표가',
-                hintText: '예: 80000',
+                labelText: '알림 가격',
+                hintText: '이 가격에 도달하면 알림',
+                prefixIcon: Icon(Icons.price_check),
                 border: OutlineInputBorder(),
-                suffixText: '원',
               ),
-              onChanged: (_) => setState(() {}),
             ),
             const SizedBox(height: 14),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('알림 상태: ${_alertEnabled ? 'ON' : 'OFF'}'),
-                  const SizedBox(height: 4),
-                  Text('알림 유형: $mode'),
-                  if (ticker.alertTriggered)
-                    const Padding(
-                      padding: EdgeInsets.only(top: 4),
-                      child: Text('이미 한 번 알림이 발송되었습니다. 설정 저장 시 다시 활성화됩니다.'),
-                    ),
-                  if (reached)
-                    const Padding(
-                      padding: EdgeInsets.only(top: 4),
-                      child: Text('현재 가격이 이미 목표 조건에 도달했습니다.'),
-                    ),
-                ],
-              ),
+            Text('알림 조건',
+                style: theme.textTheme.bodyMedium
+                    ?.copyWith(fontWeight: FontWeight.w600)),
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                Expanded(
+                  child: _directionTile(
+                    theme,
+                    dir: AlertDirection.above,
+                    label: '이 가격 이상으로 오르면',
+                    icon: Icons.arrow_upward,
+                    color: Colors.red.shade600,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _directionTile(
+                    theme,
+                    dir: AlertDirection.below,
+                    label: '이 가격 이하로 떨어지면',
+                    icon: Icons.arrow_downward,
+                    color: Colors.blue.shade600,
+                  ),
+                ),
+              ],
             ),
             const SizedBox(height: 16),
             Row(
               children: [
                 Expanded(
-                  child: OutlinedButton(
-                    onPressed: _saving ? null : _clearAlertSettings,
-                    child: const Text('초기화'),
+                  child: OutlinedButton.icon(
+                    onPressed: _reset,
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('초기화'),
                   ),
                 ),
-                const SizedBox(width: 12),
+                const SizedBox(width: 8),
                 Expanded(
-                  child: FilledButton(
-                    onPressed: _saving ? null : _saveAlertSettings,
-                    child: Text(_saving ? '저장 중...' : '저장'),
+                  child: FilledButton.icon(
+                    onPressed: _save,
+                    icon: const Icon(Icons.check),
+                    label: const Text('저장'),
                   ),
                 ),
               ],
@@ -342,14 +359,40 @@ class _DetailPageState extends State<DetailPage> {
     );
   }
 
-  Widget _infoChip(String label, String value) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(999),
+  Widget _directionTile(
+    ThemeData theme, {
+    required AlertDirection dir,
+    required String label,
+    required IconData icon,
+    required Color color,
+  }) {
+    final selected = _direction == dir;
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: () => setState(() => _direction = dir),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+        decoration: BoxDecoration(
+          border: Border.all(
+            color: selected ? color : theme.dividerColor,
+            width: selected ? 2 : 1,
+          ),
+          borderRadius: BorderRadius.circular(12),
+          color: selected ? color.withOpacity(0.06) : null,
+        ),
+        child: Row(
+          children: [
+            Icon(icon, color: color),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(label,
+                  style: theme.textTheme.bodySmall
+                      ?.copyWith(color: selected ? color : null)),
+            ),
+            if (selected) Icon(Icons.check_circle, size: 18, color: color),
+          ],
+        ),
       ),
-      child: Text('$label  $value'),
     );
   }
 }

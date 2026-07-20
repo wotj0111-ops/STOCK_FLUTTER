@@ -1,3 +1,6 @@
+/// 알림 방향: 목표가 이상으로 오르면 알림 / 목표가 이하로 떨어지면 알림
+enum AlertDirection { above, below }
+
 /// 감시 대상 종목 (사용자가 추가/삭제 + 알림 설정).
 class Ticker {
   final String code;
@@ -6,6 +9,7 @@ class Ticker {
   final int? alertPrice;
   final bool alertEnabled;
   final bool alertTriggered;
+  final AlertDirection alertDirection;
 
   const Ticker({
     required this.code,
@@ -14,6 +18,7 @@ class Ticker {
     this.alertPrice,
     this.alertEnabled = false,
     this.alertTriggered = false,
+    this.alertDirection = AlertDirection.above,
   });
 
   Ticker copyWith({
@@ -23,6 +28,7 @@ class Ticker {
     int? alertPrice,
     bool? alertEnabled,
     bool? alertTriggered,
+    AlertDirection? alertDirection,
     bool clearAvgPrice = false,
     bool clearAlertPrice = false,
   }) {
@@ -33,6 +39,7 @@ class Ticker {
       alertPrice: clearAlertPrice ? null : (alertPrice ?? this.alertPrice),
       alertEnabled: alertEnabled ?? this.alertEnabled,
       alertTriggered: alertTriggered ?? this.alertTriggered,
+      alertDirection: alertDirection ?? this.alertDirection,
     );
   }
 
@@ -43,6 +50,8 @@ class Ticker {
         'alert_price': alertPrice,
         'alert_enabled': alertEnabled ? 1 : 0,
         'alert_triggered': alertTriggered ? 1 : 0,
+        'alert_direction':
+            alertDirection == AlertDirection.above ? 'above' : 'below',
       };
 
   factory Ticker.fromMap(Map<String, Object?> m) => Ticker(
@@ -52,6 +61,9 @@ class Ticker {
         alertPrice: (m['alert_price'] as num?)?.toInt(),
         alertEnabled: ((m['alert_enabled'] as num?)?.toInt() ?? 0) == 1,
         alertTriggered: ((m['alert_triggered'] as num?)?.toInt() ?? 0) == 1,
+        alertDirection: (m['alert_direction'] as String?) == 'below'
+            ? AlertDirection.below
+            : AlertDirection.above,
       );
 }
 

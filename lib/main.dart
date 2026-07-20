@@ -7,11 +7,11 @@ import 'ticker_list_page.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // 알림 초기화 & 권한 요청
+  // 알림 초기화 및 권한 요청
   await NotificationService.instance.init();
   await NotificationService.instance.requestPermissions();
 
-  // 백그라운드 작업 초기화 & 주기적 시세 체크 등록
+  // 백그라운드 작업 초기화 및 주기적 시세 체크 등록
   await BackgroundTasks.instance.initialize();
   await BackgroundTasks.instance.registerPeriodicSync();
 

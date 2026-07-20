@@ -8,30 +8,26 @@ import 'scraper.dart';
 
 const String kStockBackgroundCheckTask = 'stockBackgroundCheckTask';
 
-bool _shouldTrigger({
+/// 알림 조건 판정 (사용자가 선택한 방향에 따라 익절/손절 트리거)
+bool shouldTriggerAlert({
   required Ticker ticker,
   required int currentPrice,
 }) {
   final target = ticker.alertPrice;
   if (target == null) return false;
-  final avg = ticker.avgPrice;
-
-  if (avg == null) {
-    return currentPrice >= target;
-  }
-  if (target >= avg) {
+  if (ticker.alertDirection == AlertDirection.above) {
     return currentPrice >= target;
   } else {
     return currentPrice <= target;
   }
 }
 
-Future<void> _sendLocalAlert({
+/// 백그라운드/포그라운드 공용 로컬 알림 발송
+Future<void> sendLocalAlert({
   required Ticker ticker,
   required int currentPrice,
 }) async {
   final plugin = FlutterLocalNotificationsPlugin();
-
   const androidInit = AndroidInitializationSettings('ic_notification');
   const initSettings = InitializationSettings(android: androidInit);
   await plugin.initialize(initSettings);
@@ -45,7 +41,8 @@ Future<void> _sendLocalAlert({
   );
   const details = NotificationDetails(android: androidDetails);
 
-  final title = '${ticker.name} 목표가 도달';
+  final dirLabel = ticker.alertDirection == AlertDirection.above ? '상승' : '하락';
+  final title = '${ticker.name} $dirLabel 목표가 도달';
   final body = '현재가 $currentPrice / 목표가 ${ticker.alertPrice}';
 
   await plugin.show(
@@ -60,47 +57,28 @@ Future<void> _sendLocalAlert({
 void callbackDispatcher() {
   wm.Workmanager().executeTask((task, inputData) async {
     try {
-      if (task != kStockBackgroundCheckTask) {
-        return Future.value(true);
-      }
-
+      if (task != kStockBackgroundCheckTask) return Future.value(true);
       final db = AppDb.instance;
       final scraper = NaverFinanceScraper();
-
-      final List<Ticker> tickers = await db.listWatchlist();
-
-      for (final Ticker t in tickers) {
+      final tickers = await db.listWatchlist();
+      for (final t in tickers) {
         try {
           final price = await scraper.fetchOne(t);
           if (price == null) continue;
-
           await db.insertPrice(price);
-
           if (t.alertEnabled &&
-              t.alertPrice != null &&
               !t.alertTriggered &&
-              _shouldTrigger(
-                ticker: t,
-                currentPrice: price.price,
-              )) {
-            await _sendLocalAlert(
-              ticker: t,
-              currentPrice: price.price,
-            );
+              shouldTriggerAlert(ticker: t, currentPrice: price.price)) {
+            await sendLocalAlert(ticker: t, currentPrice: price.price);
             await db.markAlertTriggered(t.code, true);
           }
         } catch (e) {
-          if (kDebugMode) {
-            debugPrint('[bg] ${t.code} 처리 실패: $e');
-          }
-          continue;
+          if (kDebugMode) debugPrint('[bg] ${t.code} 실패: $e');
         }
       }
       return Future.value(true);
     } catch (e) {
-      if (kDebugMode) {
-        debugPrint('[bg] 전체 실패: $e');
-      }
+      if (kDebugMode) debugPrint('[bg] 전체 실패: $e');
       return Future.value(false);
     }
   });
@@ -109,15 +87,11 @@ void callbackDispatcher() {
 class BackgroundTasks {
   BackgroundTasks._();
   static final BackgroundTasks instance = BackgroundTasks._();
-
   bool _initialized = false;
 
   Future<void> initialize({bool debug = false}) async {
     if (_initialized) return;
-    await wm.Workmanager().initialize(
-      callbackDispatcher,
-      isInDebugMode: debug,
-    );
+    await wm.Workmanager().initialize(callbackDispatcher, isInDebugMode: debug);
     _initialized = true;
   }
 
@@ -137,9 +111,7 @@ class BackgroundTasks {
       kStockBackgroundCheckTask,
       frequency: frequency,
       initialDelay: const Duration(seconds: 30),
-      constraints: wm.Constraints(
-        networkType: wm.NetworkType.connected,
-      ),
+      constraints: wm.Constraints(networkType: wm.NetworkType.connected),
       backoffPolicy: wm.BackoffPolicy.linear,
       backoffPolicyDelay: const Duration(minutes: 1),
     );

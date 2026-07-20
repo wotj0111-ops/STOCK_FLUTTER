@@ -5,8 +5,6 @@ import 'package:sqflite/sqflite.dart';
 import 'models.dart';
 
 /// 폰 내부 SQLite (sqflite) 저장소.
-/// - watchlist: 사용자가 추가한 종목 + 알림 설정
-/// - prices: 시계열 스냅샷 (PRIMARY KEY: ts_kst + code)
 class AppDb {
   AppDb._();
   static final AppDb instance = AppDb._();
@@ -18,7 +16,7 @@ class AppDb {
     final path = p.join(dir.path, 'stock_data.db');
     _db = await openDatabase(
       path,
-      version: 2,
+      version: 3,
       onCreate: (db, v) async {
         await db.execute('''
           CREATE TABLE watchlist (
@@ -28,7 +26,8 @@ class AppDb {
             avg_price INTEGER,
             alert_price INTEGER,
             alert_enabled INTEGER NOT NULL DEFAULT 0,
-            alert_triggered INTEGER NOT NULL DEFAULT 0
+            alert_triggered INTEGER NOT NULL DEFAULT 0,
+            alert_direction TEXT NOT NULL DEFAULT 'above'
           )
         ''');
         await db.execute('''
@@ -59,6 +58,11 @@ class AppDb {
             'ALTER TABLE watchlist ADD COLUMN alert_triggered INTEGER NOT NULL DEFAULT 0',
           );
         }
+        if (oldVersion < 3) {
+          await db.execute(
+            "ALTER TABLE watchlist ADD COLUMN alert_direction TEXT NOT NULL DEFAULT 'above'",
+          );
+        }
       },
     );
     return _db!;
@@ -79,11 +83,11 @@ class AppDb {
         'alert_price': t.alertPrice,
         'alert_enabled': t.alertEnabled ? 1 : 0,
         'alert_triggered': t.alertTriggered ? 1 : 0,
+        'alert_direction': 'above',
       });
     }
   }
 
-  // ───── watchlist ─────
   Future<List<Ticker>> listWatchlist() async {
     final rows = await (await db).query('watchlist', orderBy: 'added_at ASC');
     return rows.map((r) => Ticker.fromMap(r)).toList();
@@ -111,6 +115,8 @@ class AppDb {
         'alert_price': t.alertPrice,
         'alert_enabled': t.alertEnabled ? 1 : 0,
         'alert_triggered': t.alertTriggered ? 1 : 0,
+        'alert_direction':
+            t.alertDirection == AlertDirection.above ? 'above' : 'below',
       },
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
@@ -121,6 +127,7 @@ class AppDb {
     int? avgPrice,
     int? alertPrice,
     required bool alertEnabled,
+    required AlertDirection alertDirection,
   }) async {
     await (await db).update(
       'watchlist',
@@ -129,6 +136,8 @@ class AppDb {
         'alert_price': alertPrice,
         'alert_enabled': alertEnabled ? 1 : 0,
         'alert_triggered': 0,
+        'alert_direction':
+            alertDirection == AlertDirection.above ? 'above' : 'below',
       },
       where: 'code = ?',
       whereArgs: [code],
@@ -149,7 +158,6 @@ class AppDb {
     await (await db).delete('prices', where: 'code = ?', whereArgs: [code]);
   }
 
-  // ───── prices ─────
   Future<void> insertPrice(PricePoint p) async {
     await (await db).insert(
       'prices',
