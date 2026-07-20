@@ -1,7 +1,6 @@
 plugins {
     id "com.android.application"
     id "kotlin-android"
-    // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id "dev.flutter.flutter-gradle-plugin"
 }
 
@@ -23,7 +22,6 @@ if (flutterVersionName == null) {
     flutterVersionName = '1.0'
 }
 
-// (선택) 릴리스 서명용 key.properties 로드
 def keystoreProperties = new Properties()
 def keystorePropertiesFile = rootProject.file('key.properties')
 if (keystorePropertiesFile.exists()) {
@@ -36,10 +34,11 @@ android {
     namespace "com.example.stock_app"
     compileSdkVersion 34
 
-    // ⚠️ 플러그인들이 요구하는 NDK 버전으로 통일
     ndkVersion "25.1.8937393"
 
+    // ✅ 이번 오류의 핵심 수정: core library desugaring 활성화
     compileOptions {
+        coreLibraryDesugaringEnabled true
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
@@ -74,7 +73,6 @@ android {
 
     buildTypes {
         release {
-            // key.properties가 있으면 릴리스 키, 없으면 debug 키로 서명
             signingConfig keystorePropertiesFile.exists()
                     ? signingConfigs.release
                     : signingConfigs.debug
@@ -93,4 +91,7 @@ flutter {
 
 dependencies {
     implementation "org.jetbrains.kotlin:kotlin-stdlib:1.9.10"
+
+    // ✅ 이번 오류의 핵심 수정: desugar 라이브러리 추가
+    coreLibraryDesugaring "com.android.tools:desugar_jdk_libs:2.0.4"
 }
