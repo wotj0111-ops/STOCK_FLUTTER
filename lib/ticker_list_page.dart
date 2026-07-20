@@ -1,16 +1,20 @@
 import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
+import 'alert_logic.dart';
 import 'db.dart';
-import 'models.dart';
-import 'scraper.dart';
 import 'detail_page.dart';
+import 'models.dart';
+import 'notification_service.dart';
+import 'scraper.dart';
 
 /// 관심종목 리스트 화면 (앱 진입점).
 /// - 앱이 열려 있는 동안 1분마다 자동 refresh
 /// - pull-to-refresh 지원
 /// - + 버튼으로 관심종목 추가 (종목코드 6자리 입력 → 이름 자동 조회)
+/// - 알림 조건 충족 시 로컬 알림 발송
 class TickerListPage extends StatefulWidget {
   const TickerListPage({super.key});
 
@@ -52,8 +56,7 @@ class _TickerListPageState extends State<TickerListPage> {
       _rows = rows;
       _loading = false;
     });
-    // 첫 진입 시 곧바로 원격 조회
-    _refresh();
+    await _refresh();
   }
 
   Future<void> _refresh() async {
@@ -62,22 +65,40 @@ class _TickerListPageState extends State<TickerListPage> {
       _refreshing = true;
       _errorBanner = null;
     });
+
     int okCount = 0;
     final failed = <String>[];
     final watchlist = await AppDb.instance.listWatchlist();
     final newRows = <_Row>[];
+
     for (final t in watchlist) {
+      final previous = await AppDb.instance.latestPrice(t.code);
       final p = await _scraper.fetchOne(t);
       if (p != null) {
         await AppDb.instance.insertPrice(p);
-        newRows.add(_Row(ticker: t, price: p));
+
+        if (shouldTriggerAlert(
+          ticker: t,
+          currentPrice: p.price,
+          previousPrice: previous?.price,
+        )) {
+          await NotificationService.instance.showTargetReached(
+            ticker: t,
+            price: p,
+          );
+          await AppDb.instance.markAlertTriggered(t.code, true);
+        }
+
+        final latestTicker = await AppDb.instance.getTicker(t.code) ?? t;
+        newRows.add(_Row(ticker: latestTicker, price: p));
         okCount++;
       } else {
-        final cached = await AppDb.instance.latestPrice(t.code);
+        final cached = previous;
         newRows.add(_Row(ticker: t, price: cached));
         failed.add(t.code);
       }
     }
+
     if (!mounted) return;
     setState(() {
       _rows = newRows;
@@ -127,8 +148,7 @@ class _TickerListPageState extends State<TickerListPage> {
             await lookup();
             return;
           }
-          await AppDb.instance
-              .addWatch(Ticker(code: code, name: previewName!));
+          await AppDb.instance.addWatch(Ticker(code: code, name: previewName!));
           if (!mounted) return;
           Navigator.pop(ctx);
           await _bootstrap();
@@ -152,10 +172,10 @@ class _TickerListPageState extends State<TickerListPage> {
                       ? const Padding(
                           padding: EdgeInsets.all(12),
                           child: SizedBox(
-                              width: 16,
-                              height: 16,
-                              child:
-                                  CircularProgressIndicator(strokeWidth: 2)),
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
                         )
                       : IconButton(
                           icon: const Icon(Icons.search),
@@ -173,8 +193,9 @@ class _TickerListPageState extends State<TickerListPage> {
           ),
           actions: [
             TextButton(
-                onPressed: () => Navigator.pop(ctx),
-                child: const Text('취소')),
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('취소'),
+            ),
             FilledButton(onPressed: save, child: const Text('추가')),
           ],
         );
@@ -190,11 +211,13 @@ class _TickerListPageState extends State<TickerListPage> {
         content: const Text('관심종목에서 제거하고 저장된 시계열 데이터도 삭제합니다.'),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('취소')),
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('취소'),
+          ),
           FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('삭제')),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('삭제'),
+          ),
         ],
       ),
     );
@@ -214,14 +237,13 @@ class _TickerListPageState extends State<TickerListPage> {
             const Padding(
               padding: EdgeInsets.all(16),
               child: SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: CircularProgressIndicator(
-                      strokeWidth: 2, color: Colors.white)),
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+              ),
             )
           else
-            IconButton(
-                icon: const Icon(Icons.refresh), onPressed: _refresh),
+            IconButton(icon: const Icon(Icons.refresh), onPressed: _refresh),
         ],
       ),
       floatingActionButton: FloatingActionButton(
@@ -246,16 +268,20 @@ class _TickerListPageState extends State<TickerListPage> {
                   child: RefreshIndicator(
                     onRefresh: _refresh,
                     child: _rows.isEmpty
-                        ? ListView(children: const [
-                            SizedBox(height: 120),
-                            Center(
-                                child: Text('오른쪽 하단 + 버튼으로\n관심종목을 추가하세요.',
-                                    textAlign: TextAlign.center)),
-                          ])
+                        ? ListView(
+                            children: const [
+                              SizedBox(height: 120),
+                              Center(
+                                child: Text(
+                                  '오른쪽 하단 + 버튼으로\n관심종목을 추가하세요.',
+                                  textAlign: TextAlign.center,
+                                ),
+                              ),
+                            ],
+                          )
                         : ListView.separated(
                             itemCount: _rows.length,
-                            separatorBuilder: (_, __) =>
-                                const Divider(height: 1),
+                            separatorBuilder: (_, __) => const Divider(height: 1),
                             itemBuilder: (_, i) => _tile(_rows[i]),
                           ),
                   ),
@@ -269,17 +295,14 @@ class _TickerListPageState extends State<TickerListPage> {
     final p = r.price;
     final positive = (p?.change ?? 0) > 0;
     final negative = (p?.change ?? 0) < 0;
-    final color = positive
-        ? Colors.red
-        : negative
-            ? Colors.blue
-            : Colors.grey;
+    final color = positive ? Colors.red : (negative ? Colors.blue : Colors.grey);
+
     return Dismissible(
       key: ValueKey('tk-${r.ticker.code}'),
       direction: DismissDirection.endToStart,
       confirmDismiss: (_) async {
         await _confirmDelete(r.ticker);
-        return false; // 실제 제거는 _confirmDelete 안에서 이미 함
+        return false;
       },
       background: Container(
         color: Colors.red,
@@ -288,18 +311,43 @@ class _TickerListPageState extends State<TickerListPage> {
         child: const Icon(Icons.delete, color: Colors.white),
       ),
       child: ListTile(
-        title: Text(r.ticker.name,
-            style: const TextStyle(fontWeight: FontWeight.w600)),
-        subtitle: Text(r.ticker.code),
+        title: Row(
+          children: [
+            Expanded(
+              child: Text(
+                r.ticker.name,
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
+            ),
+            if (r.ticker.alertEnabled)
+              Icon(
+                r.ticker.alertTriggered ? Icons.notifications_active : Icons.notifications,
+                size: 18,
+                color: r.ticker.alertTriggered ? Colors.orange : Colors.indigo,
+              ),
+          ],
+        ),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(r.ticker.code),
+            if (r.ticker.avgPrice != null || r.ticker.alertPrice != null)
+              Text(
+                '평단 ${formattedWon(r.ticker.avgPrice)} · 목표 ${formattedWon(r.ticker.alertPrice)}',
+                style: const TextStyle(fontSize: 12),
+              ),
+          ],
+        ),
         trailing: p == null
             ? const Text('N/A')
             : Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
-                  Text('${_fmt.format(p.price)}원',
-                      style: const TextStyle(
-                          fontSize: 16, fontWeight: FontWeight.w600)),
+                  Text(
+                    '${_fmt.format(p.price)}원',
+                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                  ),
                   Text(
                     '${p.change >= 0 ? '+' : ''}${_fmt.format(p.change)} '
                     '(${p.changePct.toStringAsFixed(2)}%)',
@@ -310,10 +358,9 @@ class _TickerListPageState extends State<TickerListPage> {
         onTap: () async {
           await Navigator.push(
             context,
-            MaterialPageRoute(
-                builder: (_) => DetailPage(ticker: r.ticker)),
+            MaterialPageRoute(builder: (_) => DetailPage(ticker: r.ticker)),
           );
-          _bootstrap();
+          await _bootstrap();
         },
       ),
     );

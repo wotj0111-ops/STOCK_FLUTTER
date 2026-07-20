@@ -1,7 +1,7 @@
 name: stock_app
 description: 개인용 주식 대시보드 — 폰이 직접 네이버 금융을 조회하는 독립형 앱.
 publish_to: 'none'
-version: 0.1.0+1
+version: 0.2.0+2
 
 environment:
   sdk: '>=3.3.0 <4.0.0'
@@ -17,6 +17,7 @@ dependencies:
   shared_preferences: ^2.3.2
   fl_chart: ^0.68.0
   intl: ^0.19.0
+  flutter_local_notifications: ^17.2.2
 
 dev_dependencies:
   flutter_lints: ^3.0.0

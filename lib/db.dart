@@ -5,7 +5,7 @@ import 'package:sqflite/sqflite.dart';
 import 'models.dart';
 
 /// 폰 내부 SQLite (sqflite) 저장소.
-/// - watchlist: 사용자가 추가한 종목
+/// - watchlist: 사용자가 추가한 종목 + 알림 설정
 /// - prices: 시계열 스냅샷 (PRIMARY KEY: ts_kst + code)
 class AppDb {
   AppDb._();
@@ -18,13 +18,17 @@ class AppDb {
     final path = p.join(dir.path, 'stock_data.db');
     _db = await openDatabase(
       path,
-      version: 1,
+      version: 2,
       onCreate: (db, v) async {
         await db.execute('''
           CREATE TABLE watchlist (
             code TEXT PRIMARY KEY,
             name TEXT NOT NULL,
-            added_at TEXT NOT NULL
+            added_at TEXT NOT NULL,
+            avg_price INTEGER,
+            alert_price INTEGER,
+            alert_enabled INTEGER NOT NULL DEFAULT 0,
+            alert_triggered INTEGER NOT NULL DEFAULT 0
           )
         ''');
         await db.execute('''
@@ -40,10 +44,21 @@ class AppDb {
           )
         ''');
         await db.execute(
-            'CREATE INDEX idx_prices_code_ts ON prices(code, ts_kst)');
-
-        // 초기 시드 (사용자가 처음 앱을 켰을 때 빈 화면 방지)
+          'CREATE INDEX idx_prices_code_ts ON prices(code, ts_kst)',
+        );
         await _seed(db);
+      },
+      onUpgrade: (db, oldVersion, newVersion) async {
+        if (oldVersion < 2) {
+          await db.execute('ALTER TABLE watchlist ADD COLUMN avg_price INTEGER');
+          await db.execute('ALTER TABLE watchlist ADD COLUMN alert_price INTEGER');
+          await db.execute(
+            'ALTER TABLE watchlist ADD COLUMN alert_enabled INTEGER NOT NULL DEFAULT 0',
+          );
+          await db.execute(
+            'ALTER TABLE watchlist ADD COLUMN alert_triggered INTEGER NOT NULL DEFAULT 0',
+          );
+        }
       },
     );
     return _db!;
@@ -60,6 +75,10 @@ class AppDb {
         'code': t.code,
         'name': t.name,
         'added_at': now,
+        'avg_price': t.avgPrice,
+        'alert_price': t.alertPrice,
+        'alert_enabled': t.alertEnabled ? 1 : 0,
+        'alert_triggered': t.alertTriggered ? 1 : 0,
       });
     }
   }
@@ -67,9 +86,18 @@ class AppDb {
   // ───── watchlist ─────
   Future<List<Ticker>> listWatchlist() async {
     final rows = await (await db).query('watchlist', orderBy: 'added_at ASC');
-    return rows
-        .map((r) => Ticker(code: r['code'] as String, name: r['name'] as String))
-        .toList();
+    return rows.map((r) => Ticker.fromMap(r)).toList();
+  }
+
+  Future<Ticker?> getTicker(String code) async {
+    final rows = await (await db).query(
+      'watchlist',
+      where: 'code = ?',
+      whereArgs: [code],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return Ticker.fromMap(rows.first);
   }
 
   Future<void> addWatch(Ticker t) async {
@@ -79,8 +107,40 @@ class AppDb {
         'code': t.code,
         'name': t.name,
         'added_at': DateTime.now().toIso8601String(),
+        'avg_price': t.avgPrice,
+        'alert_price': t.alertPrice,
+        'alert_enabled': t.alertEnabled ? 1 : 0,
+        'alert_triggered': t.alertTriggered ? 1 : 0,
       },
       conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<void> updateAlertSettings({
+    required String code,
+    int? avgPrice,
+    int? alertPrice,
+    required bool alertEnabled,
+  }) async {
+    await (await db).update(
+      'watchlist',
+      {
+        'avg_price': avgPrice,
+        'alert_price': alertPrice,
+        'alert_enabled': alertEnabled ? 1 : 0,
+        'alert_triggered': 0,
+      },
+      where: 'code = ?',
+      whereArgs: [code],
+    );
+  }
+
+  Future<void> markAlertTriggered(String code, bool triggered) async {
+    await (await db).update(
+      'watchlist',
+      {'alert_triggered': triggered ? 1 : 0},
+      where: 'code = ?',
+      whereArgs: [code],
     );
   }
 

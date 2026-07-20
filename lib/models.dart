@@ -1,12 +1,58 @@
-/// 감시 대상 종목 (사용자가 추가/삭제).
+/// 감시 대상 종목 (사용자가 추가/삭제 + 알림 설정).
 class Ticker {
   final String code;
   final String name;
-  const Ticker({required this.code, required this.name});
+  final int? avgPrice;
+  final int? alertPrice;
+  final bool alertEnabled;
+  final bool alertTriggered;
 
-  Map<String, Object?> toMap() => {'code': code, 'name': name};
-  factory Ticker.fromMap(Map<String, Object?> m) =>
-      Ticker(code: m['code'] as String, name: m['name'] as String);
+  const Ticker({
+    required this.code,
+    required this.name,
+    this.avgPrice,
+    this.alertPrice,
+    this.alertEnabled = false,
+    this.alertTriggered = false,
+  });
+
+  Ticker copyWith({
+    String? code,
+    String? name,
+    int? avgPrice,
+    int? alertPrice,
+    bool? alertEnabled,
+    bool? alertTriggered,
+    bool clearAvgPrice = false,
+    bool clearAlertPrice = false,
+  }) {
+    return Ticker(
+      code: code ?? this.code,
+      name: name ?? this.name,
+      avgPrice: clearAvgPrice ? null : (avgPrice ?? this.avgPrice),
+      alertPrice: clearAlertPrice ? null : (alertPrice ?? this.alertPrice),
+      alertEnabled: alertEnabled ?? this.alertEnabled,
+      alertTriggered: alertTriggered ?? this.alertTriggered,
+    );
+  }
+
+  Map<String, Object?> toMap() => {
+        'code': code,
+        'name': name,
+        'avg_price': avgPrice,
+        'alert_price': alertPrice,
+        'alert_enabled': alertEnabled ? 1 : 0,
+        'alert_triggered': alertTriggered ? 1 : 0,
+      };
+
+  factory Ticker.fromMap(Map<String, Object?> m) => Ticker(
+        code: m['code'] as String,
+        name: m['name'] as String,
+        avgPrice: (m['avg_price'] as num?)?.toInt(),
+        alertPrice: (m['alert_price'] as num?)?.toInt(),
+        alertEnabled: ((m['alert_enabled'] as num?)?.toInt() ?? 0) == 1,
+        alertTriggered: ((m['alert_triggered'] as num?)?.toInt() ?? 0) == 1,
+      );
 }
 
 /// 특정 시각의 시세 스냅샷.
