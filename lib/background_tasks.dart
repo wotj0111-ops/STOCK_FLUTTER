@@ -7,10 +7,8 @@ import 'models.dart';
 import 'notification_service.dart';
 import 'scraper.dart';
 
-/// WorkManager에 등록되는 task 고유 이름
 const String kStockBackgroundCheckTask = 'stockBackgroundCheckTask';
 
-/// 백그라운드 실행 진입점 (앱이 종료돼 있어도 호출됨)
 @pragma('vm:entry-point')
 void callbackDispatcher() {
   wm.Workmanager().executeTask((task, inputData) async {
@@ -29,13 +27,11 @@ void callbackDispatcher() {
 
       for (final Ticker t in tickers) {
         try {
-          // ✅ 실제 시그니처에 맞춰 Ticker를 그대로 전달
           final price = await scraper.fetchOne(t);
           if (price == null) continue;
 
           await db.insertPrice(price);
 
-          // ✅ named 파라미터 방식으로 호출
           if (t.alertEnabled &&
               t.alertPrice != null &&
               !t.alertTriggered &&
@@ -43,7 +39,11 @@ void callbackDispatcher() {
                 ticker: t,
                 currentPrice: price.price,
               )) {
-            await notifier.showTargetReached(t, price.price);
+            // ✅ named 인자로 호출
+            await notifier.showTargetReached(
+              ticker: t,
+              currentPrice: price.price,
+            );
             await db.markAlertTriggered(t.code, true);
           }
         } catch (e) {
@@ -63,14 +63,12 @@ void callbackDispatcher() {
   });
 }
 
-/// 백그라운드 작업 관리 싱글턴
 class BackgroundTasks {
   BackgroundTasks._();
   static final BackgroundTasks instance = BackgroundTasks._();
 
   bool _initialized = false;
 
-  /// 앱 시작 시 1회 호출
   Future<void> initialize({bool debug = false}) async {
     if (_initialized) return;
     await wm.Workmanager().initialize(
@@ -80,10 +78,6 @@ class BackgroundTasks {
     _initialized = true;
   }
 
-  /// 주기적 시세 체크 등록 (Android 최소 15분)
-  ///
-  /// `main.dart` 호환을 위해 `registerPeriodicSync`와 `registerPeriodicCheck`
-  /// 두 이름을 모두 제공합니다.
   Future<void> registerPeriodicSync({
     Duration frequency = const Duration(minutes: 15),
   }) =>
@@ -100,10 +94,6 @@ class BackgroundTasks {
       kStockBackgroundCheckTask,
       frequency: frequency,
       initialDelay: const Duration(seconds: 30),
-      // ⚠️ existingWorkPolicy 는 workmanager 버전에 따라 enum 이름이
-      // (ExistingWorkPolicy / ExistingPeriodicWorkPolicy) 로 다릅니다.
-      // 빌드 호환성을 위해 여기서는 지정하지 않습니다.
-      // 필요 시 pubspec.yaml 의 workmanager 버전 확인 후 다시 추가하세요.
       constraints: wm.Constraints(
         networkType: wm.NetworkType.connected,
       ),
