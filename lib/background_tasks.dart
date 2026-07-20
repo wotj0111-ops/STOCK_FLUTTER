@@ -1,13 +1,38 @@
 import 'package:flutter/foundation.dart';
 import 'package:workmanager/workmanager.dart' as wm;
 
-import 'alert_logic.dart';
 import 'db.dart';
 import 'models.dart';
 import 'notification_service.dart';
 import 'scraper.dart';
 
 const String kStockBackgroundCheckTask = 'stockBackgroundCheckTask';
+
+/// 알림 조건: 저장된 알림가에 도달했는지 판정.
+/// - 알림가 >= 평단가  : 현재가가 알림가 이상으로 오르면 발동 (익절)
+/// - 알림가 <  평단가  : 현재가가 알림가 이하로 내리면 발동 (손절)
+/// - 평단가 미설정      : 현재가가 알림가에 도달만 하면 발동
+bool _shouldTrigger({
+  required Ticker ticker,
+  required double currentPrice,
+}) {
+  final target = ticker.alertPrice;
+  if (target == null) return false;
+  final avg = ticker.avgPrice;
+
+  if (avg == null) {
+    // 평단가가 없으면 목표가에 근접/도달만 확인
+    return currentPrice >= target;
+  }
+
+  if (target >= avg) {
+    // 익절 알림
+    return currentPrice >= target;
+  } else {
+    // 손절 알림
+    return currentPrice <= target;
+  }
+}
 
 @pragma('vm:entry-point')
 void callbackDispatcher() {
@@ -35,11 +60,10 @@ void callbackDispatcher() {
           if (t.alertEnabled &&
               t.alertPrice != null &&
               !t.alertTriggered &&
-              shouldTriggerAlert(
+              _shouldTrigger(
                 ticker: t,
                 currentPrice: price.price,
               )) {
-            // ✅ named 인자로 호출
             await notifier.showTargetReached(
               ticker: t,
               currentPrice: price.price,
