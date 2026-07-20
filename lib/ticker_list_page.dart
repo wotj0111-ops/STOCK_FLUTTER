@@ -309,7 +309,7 @@ class _TickerListPageState extends State<TickerListPage>
   }
 }
 
-/// 종목 추가 다이얼로그 (코드/이름 스마트 검색 · 부분일치)
+/// 종목 추가 다이얼로그 (코드/이름 스마트 검색 · 부분일치 · 진단 스낵바)
 class _AddTickerDialog extends StatefulWidget {
   final NaverFinanceScraper scraper;
   const _AddTickerDialog({required this.scraper});
@@ -323,6 +323,7 @@ class _AddTickerDialogState extends State<_AddTickerDialog> {
   Timer? _debounce;
   List<Ticker> _results = [];
   bool _searching = false;
+  String? _lastDiag;
 
   @override
   void dispose() {
@@ -334,22 +335,63 @@ class _AddTickerDialogState extends State<_AddTickerDialog> {
   void _onChanged(String v) {
     _debounce?.cancel();
     _debounce = Timer(const Duration(milliseconds: 350), () async {
-      if (v.trim().isEmpty) {
-        setState(() => _results = []);
+      final q = v.trim();
+      if (q.isEmpty) {
+        setState(() {
+          _results = [];
+          _lastDiag = null;
+        });
         return;
       }
-      setState(() => _searching = true);
-      final list = await widget.scraper.smartSearch(v);
+      setState(() {
+        _searching = true;
+        _lastDiag = null;
+      });
+
+      List<Ticker> list;
+      List<SearchDiag> diags = const [];
+
+      // 6자리 숫자 → 코드 검색, 그 외 → 이름(부분일치) 3단계 폴백
+      if (RegExp(r'^\d{6}$').hasMatch(q)) {
+        final n = await widget.scraper.lookupName(q);
+        list = n == null ? <Ticker>[] : [Ticker(code: q, name: n)];
+      } else {
+        final r = await widget.scraper.searchByNameDiag(q);
+        list = r.items;
+        diags = r.diags;
+      }
+
       if (!mounted) return;
       setState(() {
         _results = list;
         _searching = false;
+        _lastDiag = (list.isEmpty && diags.isNotEmpty)
+            ? diags.map((d) => d.toString()).join(' | ')
+            : null;
       });
+
+      // 실기기 진단: 결과가 비었을 때만 스낵바로 노출
+      if (_lastDiag != null && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            duration: const Duration(seconds: 8),
+            content: Text('검색 진단: $_lastDiag'),
+            action: SnackBarAction(
+              label: '복사',
+              onPressed: () {
+                // 클립보드 복사는 flutter/services 없이 SnackBar 유지 목적으로 생략.
+                // 필요 시 Clipboard.setData 로 확장 가능.
+              },
+            ),
+          ),
+        );
+      }
     });
   }
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return AlertDialog(
       title: const Text('종목 추가'),
       content: SizedBox(
@@ -374,7 +416,27 @@ class _AddTickerDialogState extends State<_AddTickerDialog> {
               child: _searching
                   ? const Center(child: CircularProgressIndicator())
                   : _results.isEmpty
-                      ? const Center(child: Text('검색 결과가 없습니다.'))
+                      ? Center(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Text('검색 결과가 없습니다.'),
+                              if (_lastDiag != null) ...[
+                                const SizedBox(height: 8),
+                                Padding(
+                                  padding:
+                                      const EdgeInsets.symmetric(horizontal: 12),
+                                  child: Text(
+                                    _lastDiag!,
+                                    textAlign: TextAlign.center,
+                                    style: theme.textTheme.bodySmall
+                                        ?.copyWith(color: theme.hintColor),
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                        )
                       : ListView.separated(
                           itemCount: _results.length,
                           separatorBuilder: (_, __) => const Divider(height: 1),
