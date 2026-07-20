@@ -13,8 +13,7 @@ class NaverFinanceScraper {
     'Accept-Language': 'ko-KR,ko;q=0.9',
   };
 
-  /// 종목코드 → 종목명 조회 (관심종목 추가 시 사용).
-  /// finance.naver.com 종목 페이지는 UTF-8 이므로 이름이 깨지지 않는다.
+  /// 종목코드 → 종목명 (UTF-8 개별 페이지)
   Future<String?> lookupName(String code) async {
     final html = await _fetchHtml(code);
     if (html == null) return null;
@@ -25,52 +24,91 @@ class NaverFinanceScraper {
     return m?.group(1)?.trim();
   }
 
-  /// 종목명으로 검색 → [{code, name}] 후보 반환.
-  ///
-  /// 자동완성 API 대신 finance.naver.com 검색 결과 페이지의 HTML 을 파싱.
-  /// 검색 결과 페이지는 EUC-KR 이라 한글이 깨지지만, 우리는 코드만 뽑고
-  /// 종목명은 각 코드의 UTF-8 개별 페이지에서 다시 조회해서 채운다.
+  /// 종목명 부분일치 검색 (LIKE 스타일).
+  /// 네이버 금융 자동완성 JSON API. 부분 문자열도 매칭됨.
   Future<List<Ticker>> searchByName(String keyword) async {
-    if (keyword.trim().isEmpty) return [];
+    final q = keyword.trim();
+    if (q.isEmpty) return [];
     final url = Uri.parse(
-      'https://finance.naver.com/search/searchList.naver'
-      '?query=${Uri.encodeQueryComponent(keyword)}',
+      'https://ac.finance.naver.com/ac'
+      '?q=${Uri.encodeQueryComponent(q)}'
+      '&q_enc=utf-8&st=111&frm=stock&r_format=json&r_enc=utf-8&r_unicode=0&t_koreng=1',
     );
     try {
       final r = await http
           .get(url, headers: _headers)
           .timeout(const Duration(seconds: 6));
       if (r.statusCode != 200) return [];
-
-      // 이 페이지는 EUC-KR 이므로 bytes 를 latin1 그대로 문자열화 하여
-      // 정규식으로 코드만 뽑는다. 종목명 한글은 사용하지 않으므로 인코딩 무관.
-      final html = String.fromCharCodes(r.bodyBytes);
-
-      // <a href="/item/main.naver?code=005930"> ... </a>
-      final codeRe = RegExp(r'href="/item/main\.naver\?code=(\d{6})"');
-      final codes = <String>[];
+      final body = utf8.decode(r.bodyBytes, allowMalformed: true);
+      final data = json.decode(body) as Map<String, dynamic>;
+      final items = <Ticker>[];
       final seen = <String>{};
-      for (final m in codeRe.allMatches(html)) {
-        final code = m.group(1)!;
-        if (seen.add(code)) codes.add(code);
-        if (codes.length >= 10) break;
+
+      // 실제 응답 구조: { "items": [ [ [["삼성전자"], ..., ["005930"], ...], ... ] ] }
+      // 카테고리마다 스키마가 살짝 달라서, 배열을 재귀 탐색해서
+      // "6자리 코드"와 그 근처의 "종목명" 후보를 쌍으로 뽑는다.
+      final groups = data['items'] as List? ?? [];
+      for (final g in groups) {
+        if (g is! List) continue;
+        for (final row in g) {
+          if (row is! List) continue;
+          String? code;
+          String? name;
+
+          for (final field in row) {
+            final v = _firstString(field);
+            if (v == null) continue;
+            if (code == null && RegExp(r'^\d{6}$').hasMatch(v)) {
+              code = v;
+              continue;
+            }
+            // 종목명 후보: 한글/영문/숫자 포함, 6자리 순수숫자는 제외
+            if (name == null &&
+                RegExp(r'[가-힣A-Za-z]').hasMatch(v) &&
+                !RegExp(r'^\d+$').hasMatch(v) &&
+                v.length <= 30) {
+              name = v;
+            }
+          }
+
+          if (code != null && name != null && seen.add(code)) {
+            items.add(Ticker(code: code, name: name));
+            if (items.length >= 15) break;
+          }
+        }
+        if (items.length >= 15) break;
       }
 
-      // 각 코드에 대해 이름은 UTF-8 개별 종목 페이지에서 정확히 조회.
-      final results = <Ticker>[];
-      for (final code in codes) {
-        final name = await lookupName(code);
-        if (name != null && name.isNotEmpty) {
-          results.add(Ticker(code: code, name: name));
+      // 부분일치 랭킹: 이름이 keyword로 시작하는 것을 앞으로
+      items.sort((a, b) {
+        int score(String n) {
+          if (n == q) return 0;
+          if (n.startsWith(q)) return 1;
+          if (n.contains(q)) return 2;
+          return 3;
         }
-      }
-      return results;
+
+        return score(a.name).compareTo(score(b.name));
+      });
+      return items;
     } catch (_) {
       return [];
     }
   }
 
-  /// 6자리 숫자면 코드 검색, 아니면 이름 검색.
+  /// 리스트가 중첩된 형태에서 첫 문자열을 재귀로 찾는다.
+  String? _firstString(dynamic node) {
+    if (node is String) return node;
+    if (node is List && node.isNotEmpty) {
+      for (final e in node) {
+        final s = _firstString(e);
+        if (s != null) return s;
+      }
+    }
+    return null;
+  }
+
+  /// 6자리 숫자면 코드 검색, 아니면 이름(부분일치) 검색.
   Future<List<Ticker>> smartSearch(String query) async {
     final q = query.trim();
     if (q.isEmpty) return [];

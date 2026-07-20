@@ -28,119 +28,106 @@ class NewsSummary {
   });
 }
 
-/// 네이버 뉴스 모바일 검색 파서.
-/// - UTF-8 응답이라 한글 인코딩 문제 없음
-/// - 각 뉴스 카드에 언론사 원문 URL이 그대로 붙어 있어
-///   네이버 증권 앱 딥링크 팝업이 뜨지 않음
+/// Google News RSS 파서.
+/// - UTF-8 XML 응답 → 인코딩 이슈 없음
+/// - 각 뉴스의 <link>가 언론사 원문 URL (네이버 앱 딥링크 아님)
+/// - 종목명 검색으로 관련도/최신 뉴스 확보
 class StockNewsService {
   static const _headers = {
     'User-Agent':
         'Mozilla/5.0 (Linux; Android 12; Pixel) AppleWebKit/537.36 '
         '(KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36',
     'Accept-Language': 'ko-KR,ko;q=0.9',
-    'Referer': 'https://m.naver.com/',
   };
 
-  /// [query] 는 종목명(예: "삼성전자")을 넘긴다.
-  Future<NewsSummary> fetch(String query, {int limit = 12}) async {
+  /// [query]는 종목명(예: "삼성전자")을 넘긴다.
+  Future<NewsSummary> fetch(String query, {int limit = 15}) async {
+    // 종목명에 큰따옴표를 감싸 정확도 UP + 한국 언론사 우선
+    final q = '"$query" 주식 OR 증권 OR 실적';
     final url = Uri.parse(
-      'https://m.search.naver.com/search.naver'
-      '?where=m_news&sm=mtb_jum&query=${Uri.encodeQueryComponent(query)}',
+      'https://news.google.com/rss/search'
+      '?q=${Uri.encodeQueryComponent(q)}'
+      '&hl=ko&gl=KR&ceid=KR:ko',
     );
-    final r = await http
-        .get(url, headers: _headers)
-        .timeout(const Duration(seconds: 8));
-    if (r.statusCode != 200) {
+
+    try {
+      final r = await http
+          .get(url, headers: _headers)
+          .timeout(const Duration(seconds: 8));
+      if (r.statusCode != 200) {
+        return NewsSummary(
+          items: const [],
+          keywords: const [],
+          headline: '뉴스를 불러올 수 없습니다.',
+        );
+      }
+      final xml = utf8.decode(r.bodyBytes, allowMalformed: true);
+
+      final itemRe = RegExp(r'<item>(.*?)</item>', dotAll: true);
+      RegExp tagRe(String tag) => RegExp(
+            '<$tag>(?:<!\\[CDATA\\[)?(.*?)(?:\\]\\]>)?</$tag>',
+            dotAll: true,
+          );
+
+      final items = <StockNews>[];
+      for (final m in itemRe.allMatches(xml)) {
+        final body = m.group(1)!;
+        final title = _decodeHtml(
+            _stripTags(tagRe('title').firstMatch(body)?.group(1) ?? '').trim());
+        final link = (tagRe('link').firstMatch(body)?.group(1) ?? '').trim();
+        final pubDate =
+            (tagRe('pubDate').firstMatch(body)?.group(1) ?? '').trim();
+        final srcMatch =
+            RegExp(r'<source[^>]*>(.*?)</source>', dotAll: true).firstMatch(body);
+        final source = _decodeHtml(_stripTags(srcMatch?.group(1) ?? '').trim());
+
+        if (title.isEmpty || link.isEmpty) continue;
+        items.add(StockNews(
+          title: title,
+          source: source,
+          url: link,
+          dateKst: _parseRfc822ToKst(pubDate),
+          snippet: '',
+        ));
+        if (items.length >= limit) break;
+      }
+
+      final keywords = _extractKeywords(items.map((e) => e.title).toList());
+      final headline = items.isEmpty
+          ? '관련 뉴스가 없습니다.'
+          : _buildHeadline(items, keywords);
+      return NewsSummary(items: items, keywords: keywords, headline: headline);
+    } catch (_) {
       return NewsSummary(
         items: const [],
         keywords: const [],
         headline: '뉴스를 불러올 수 없습니다.',
       );
     }
-    // 네이버 뉴스 검색은 UTF-8.
-    final html = utf8.decode(r.bodyBytes, allowMalformed: true);
-
-    // 언론사별 원문 링크 (뉴스 검색 결과의 제목 앵커)
-    // 여러 클래스 스킴을 동시에 매칭.
-    final titleRe = RegExp(
-      r'<a[^>]+class="[^"]*(?:news_tit|api_txt_lines total_tit|sub_tit)[^"]*"[^>]*'
-      r'href="([^"]+)"[^>]*(?:title="([^"]+)"[^>]*)?>(.*?)</a>',
-      dotAll: true,
-    );
-
-    final items = <StockNews>[];
-    final seenUrl = <String>{};
-    for (final m in titleRe.allMatches(html)) {
-      final href = m.group(1)!;
-      final titleAttr = m.group(2);
-      final inner = _stripTags(m.group(3) ?? '');
-      final title = _decodeHtml((titleAttr ?? inner).trim());
-      if (title.isEmpty) continue;
-
-      // 네이버 뉴스 자체 상세(딥링크 유발 가능) URL 스킵, 언론사 원문만 채택
-      if (href.contains('news.naver.com')) continue;
-      if (!href.startsWith('http')) continue;
-      if (!seenUrl.add(href)) continue;
-
-      items.add(StockNews(
-        title: title,
-        source: _extractSource(html, href),
-        url: href,
-        dateKst: _extractDate(html, href),
-        snippet: '',
-      ));
-      if (items.length >= limit) break;
-    }
-
-    final keywords = _extractKeywords(items.map((e) => e.title).toList());
-    final headline = items.isEmpty
-        ? '오늘 관련 뉴스가 없습니다.'
-        : _buildHeadline(items, keywords);
-
-    return NewsSummary(items: items, keywords: keywords, headline: headline);
   }
 
-  String _extractSource(String html, String url) {
-    final idx = html.indexOf(url);
-    if (idx < 0) return '';
-    final end = idx + 2000 < html.length ? idx + 2000 : html.length;
-    final window = html.substring(idx, end);
+  /// "Sun, 20 Jul 2026 05:12:00 GMT" → KST DateTime
+  DateTime? _parseRfc822ToKst(String s) {
+    if (s.isEmpty) return null;
+    final months = {
+      'Jan': 1, 'Feb': 2, 'Mar': 3, 'Apr': 4, 'May': 5, 'Jun': 6,
+      'Jul': 7, 'Aug': 8, 'Sep': 9, 'Oct': 10, 'Nov': 11, 'Dec': 12,
+    };
     final m = RegExp(
-      r'class="[^"]*(?:info press|press|info_press)[^"]*"[^>]*>([^<]+)<',
-    ).firstMatch(window);
-    return m == null ? '' : _decodeHtml(_stripTags(m.group(1)!).trim());
-  }
-
-  DateTime? _extractDate(String html, String url) {
-    final idx = html.indexOf(url);
-    if (idx < 0) return null;
-    final end = idx + 2000 < html.length ? idx + 2000 : html.length;
-    final window = html.substring(idx, end);
-    // 상대 표기: "3분 전", "5시간 전", "1일 전"
-    final rel = RegExp(r'(\d+)\s*(분|시간|일)\s*전').firstMatch(window);
-    if (rel != null) {
-      final n = int.parse(rel.group(1)!);
-      final unit = rel.group(2)!;
-      final now = DateTime.now();
-      switch (unit) {
-        case '분':
-          return now.subtract(Duration(minutes: n));
-        case '시간':
-          return now.subtract(Duration(hours: n));
-        case '일':
-          return now.subtract(Duration(days: n));
-      }
-    }
-    // 절대 표기: 2026.07.20.
-    final abs = RegExp(r'(\d{4})\.(\d{2})\.(\d{2})\.').firstMatch(window);
-    if (abs != null) {
-      return DateTime(
-        int.parse(abs.group(1)!),
-        int.parse(abs.group(2)!),
-        int.parse(abs.group(3)!),
-      );
-    }
-    return null;
+      r'(\d{1,2})\s+(\w{3})\s+(\d{4})\s+(\d{2}):(\d{2}):(\d{2})',
+    ).firstMatch(s);
+    if (m == null) return null;
+    final month = months[m.group(2)!];
+    if (month == null) return null;
+    final utc = DateTime.utc(
+      int.parse(m.group(3)!),
+      month,
+      int.parse(m.group(1)!),
+      int.parse(m.group(4)!),
+      int.parse(m.group(5)!),
+      int.parse(m.group(6)!),
+    );
+    return utc.add(const Duration(hours: 9));
   }
 
   String _stripTags(String s) =>
@@ -178,8 +165,8 @@ class StockNewsService {
   String _buildHeadline(List<StockNews> items, List<String> keywords) {
     final now = DateTime.now();
     final recent = items
-        .where(
-            (n) => n.dateKst != null && now.difference(n.dateKst!).inHours <= 24)
+        .where((n) =>
+            n.dateKst != null && now.difference(n.dateKst!).inHours <= 24)
         .length;
     final total = items.length;
     final kw =

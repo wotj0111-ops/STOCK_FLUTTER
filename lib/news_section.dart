@@ -60,18 +60,14 @@ class _NewsSectionState extends State<NewsSection> {
     final uri = Uri.tryParse(n.url);
     if (uri == null) return;
 
-    // 1차: 인앱 브라우저 (WebView) — 네이버 증권 앱 딥링크 회피
+    // Google News 리다이렉트 URL은 브라우저에서 자동으로 언론사 원문으로 이동.
+    // 인앱 브라우저를 우선 사용 → 어떤 안드로이드 딥링크도 가로채지 못함.
     bool ok = false;
     try {
-      ok = await launchUrl(
-        uri,
-        mode: LaunchMode.inAppBrowserView,
-      );
+      ok = await launchUrl(uri, mode: LaunchMode.inAppBrowserView);
     } catch (_) {
       ok = false;
     }
-
-    // 2차: 실패하면 외부 브라우저(크롬 등)
     if (!ok) {
       try {
         ok = await launchUrl(uri, mode: LaunchMode.externalApplication);

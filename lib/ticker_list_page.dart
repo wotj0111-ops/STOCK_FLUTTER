@@ -309,7 +309,7 @@ class _TickerListPageState extends State<TickerListPage>
   }
 }
 
-/// 종목 추가 다이얼로그 (코드/이름 스마트 검색)
+/// 종목 추가 다이얼로그 (코드/이름 스마트 검색 · 부분일치)
 class _AddTickerDialog extends StatefulWidget {
   final NaverFinanceScraper scraper;
   const _AddTickerDialog({required this.scraper});
@@ -363,14 +363,14 @@ class _AddTickerDialogState extends State<_AddTickerDialog> {
               onChanged: _onChanged,
               decoration: const InputDecoration(
                 labelText: '종목명 또는 6자리 코드',
-                hintText: '예) 삼성전자, 005930',
+                hintText: '부분일치 지원 · 예) 삼성, 카카오, 005930',
                 prefixIcon: Icon(Icons.search),
                 border: OutlineInputBorder(),
               ),
             ),
             const SizedBox(height: 12),
             SizedBox(
-              height: 240,
+              height: 260,
               child: _searching
                   ? const Center(child: CircularProgressIndicator())
                   : _results.isEmpty
