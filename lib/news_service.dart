@@ -28,19 +28,24 @@ class NewsSummary {
   });
 }
 
-/// 네이버 금융 종목 뉴스 파서.
+/// 네이버 뉴스 모바일 검색 파서.
+/// - UTF-8 응답이라 한글 인코딩 문제 없음
+/// - 각 뉴스 카드에 언론사 원문 URL이 그대로 붙어 있어
+///   네이버 증권 앱 딥링크 팝업이 뜨지 않음
 class StockNewsService {
   static const _headers = {
     'User-Agent':
         'Mozilla/5.0 (Linux; Android 12; Pixel) AppleWebKit/537.36 '
         '(KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36',
-    'Referer': 'https://finance.naver.com/',
+    'Accept-Language': 'ko-KR,ko;q=0.9',
+    'Referer': 'https://m.naver.com/',
   };
 
-  Future<NewsSummary> fetch(String code, {int limit = 12}) async {
+  /// [query] 는 종목명(예: "삼성전자")을 넘긴다.
+  Future<NewsSummary> fetch(String query, {int limit = 12}) async {
     final url = Uri.parse(
-      'https://finance.naver.com/item/news_news.naver'
-      '?code=$code&page=1&sm=title_entity_id.basic&clusterId=',
+      'https://m.search.naver.com/search.naver'
+      '?where=m_news&sm=mtb_jum&query=${Uri.encodeQueryComponent(query)}',
     );
     final r = await http
         .get(url, headers: _headers)
@@ -52,30 +57,36 @@ class StockNewsService {
         headline: '뉴스를 불러올 수 없습니다.',
       );
     }
+    // 네이버 뉴스 검색은 UTF-8.
     final html = utf8.decode(r.bodyBytes, allowMalformed: true);
 
-    final rowRe = RegExp(
-      r'<tr[^>]*>\s*<td[^>]*class="title"[^>]*>\s*<a[^>]*href="([^"]+)"[^>]*>(.*?)</a>'
-      r'.*?<td[^>]*class="info"[^>]*>(.*?)</td>'
-      r'.*?<td[^>]*class="date"[^>]*>(.*?)</td>',
+    // 언론사별 원문 링크 (뉴스 검색 결과의 제목 앵커)
+    // 여러 클래스 스킴을 동시에 매칭.
+    final titleRe = RegExp(
+      r'<a[^>]+class="[^"]*(?:news_tit|api_txt_lines total_tit|sub_tit)[^"]*"[^>]*'
+      r'href="([^"]+)"[^>]*(?:title="([^"]+)"[^>]*)?>(.*?)</a>',
       dotAll: true,
     );
 
     final items = <StockNews>[];
-    for (final m in rowRe.allMatches(html)) {
+    final seenUrl = <String>{};
+    for (final m in titleRe.allMatches(html)) {
       final href = m.group(1)!;
-      final title = _decodeHtml(_stripTags(m.group(2)!)).trim();
-      final source = _decodeHtml(_stripTags(m.group(3)!)).trim();
-      final dateStr = _stripTags(m.group(4)!).trim();
-      final fullUrl =
-          href.startsWith('http') ? href : 'https://finance.naver.com$href';
-      final date = _parseKstDate(dateStr);
+      final titleAttr = m.group(2);
+      final inner = _stripTags(m.group(3) ?? '');
+      final title = _decodeHtml((titleAttr ?? inner).trim());
+      if (title.isEmpty) continue;
+
+      // 네이버 뉴스 자체 상세(딥링크 유발 가능) URL 스킵, 언론사 원문만 채택
+      if (href.contains('news.naver.com')) continue;
+      if (!href.startsWith('http')) continue;
+      if (!seenUrl.add(href)) continue;
 
       items.add(StockNews(
         title: title,
-        source: source,
-        url: fullUrl,
-        dateKst: date,
+        source: _extractSource(html, href),
+        url: href,
+        dateKst: _extractDate(html, href),
         snippet: '',
       ));
       if (items.length >= limit) break;
@@ -89,6 +100,49 @@ class StockNewsService {
     return NewsSummary(items: items, keywords: keywords, headline: headline);
   }
 
+  String _extractSource(String html, String url) {
+    final idx = html.indexOf(url);
+    if (idx < 0) return '';
+    final end = idx + 2000 < html.length ? idx + 2000 : html.length;
+    final window = html.substring(idx, end);
+    final m = RegExp(
+      r'class="[^"]*(?:info press|press|info_press)[^"]*"[^>]*>([^<]+)<',
+    ).firstMatch(window);
+    return m == null ? '' : _decodeHtml(_stripTags(m.group(1)!).trim());
+  }
+
+  DateTime? _extractDate(String html, String url) {
+    final idx = html.indexOf(url);
+    if (idx < 0) return null;
+    final end = idx + 2000 < html.length ? idx + 2000 : html.length;
+    final window = html.substring(idx, end);
+    // 상대 표기: "3분 전", "5시간 전", "1일 전"
+    final rel = RegExp(r'(\d+)\s*(분|시간|일)\s*전').firstMatch(window);
+    if (rel != null) {
+      final n = int.parse(rel.group(1)!);
+      final unit = rel.group(2)!;
+      final now = DateTime.now();
+      switch (unit) {
+        case '분':
+          return now.subtract(Duration(minutes: n));
+        case '시간':
+          return now.subtract(Duration(hours: n));
+        case '일':
+          return now.subtract(Duration(days: n));
+      }
+    }
+    // 절대 표기: 2026.07.20.
+    final abs = RegExp(r'(\d{4})\.(\d{2})\.(\d{2})\.').firstMatch(window);
+    if (abs != null) {
+      return DateTime(
+        int.parse(abs.group(1)!),
+        int.parse(abs.group(2)!),
+        int.parse(abs.group(3)!),
+      );
+    }
+    return null;
+  }
+
   String _stripTags(String s) =>
       s.replaceAll(RegExp(r'<[^>]+>'), '').replaceAll('&nbsp;', ' ').trim();
 
@@ -100,24 +154,10 @@ class StockNewsService {
       .replaceAll('&gt;', '>')
       .replaceAll('&#39;', "'");
 
-  DateTime? _parseKstDate(String s) {
-    final m = RegExp(r'(\d{4})\.(\d{2})\.(\d{2})\s+(\d{2}):(\d{2})')
-        .firstMatch(s);
-    if (m == null) return null;
-    return DateTime(
-      int.parse(m.group(1)!),
-      int.parse(m.group(2)!),
-      int.parse(m.group(3)!),
-      int.parse(m.group(4)!),
-      int.parse(m.group(5)!),
-    );
-  }
-
   List<String> _extractKeywords(List<String> titles) {
     final stop = <String>{
-      '및', '등', '위해', '통해', '이번', '오늘', '올해', '내년',
-      '지난', '관련', '대비', '중', '것', '수', '한', '두', '세',
-      '억', '만', '원', '가', '나', '을', '를', '이', '가',
+      '및', '등', '위해', '통해', '이번', '오늘', '올해', '내년', '지난',
+      '관련', '대비', '중', '것', '수', '한', '두', '세', '억', '만', '원',
       '뉴스', '기자', '단독', '속보', '종합',
     };
     final freq = <String, int>{};

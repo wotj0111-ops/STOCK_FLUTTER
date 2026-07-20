@@ -10,9 +10,11 @@ class NaverFinanceScraper {
         'Mozilla/5.0 (Linux; Android 12; Pixel) AppleWebKit/537.36 '
         '(KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36',
     'Referer': 'https://finance.naver.com/',
+    'Accept-Language': 'ko-KR,ko;q=0.9',
   };
 
   /// 종목코드 → 종목명 조회 (관심종목 추가 시 사용).
+  /// finance.naver.com 종목 페이지는 UTF-8 이므로 이름이 깨지지 않는다.
   Future<String?> lookupName(String code) async {
     final html = await _fetchHtml(code);
     if (html == null) return null;
@@ -23,44 +25,46 @@ class NaverFinanceScraper {
     return m?.group(1)?.trim();
   }
 
-  /// 종목명(회사명)으로 검색 → [{code, name}] 후보 반환.
-  /// 네이버 금융 자동완성 API 사용.
+  /// 종목명으로 검색 → [{code, name}] 후보 반환.
+  ///
+  /// 자동완성 API 대신 finance.naver.com 검색 결과 페이지의 HTML 을 파싱.
+  /// 검색 결과 페이지는 EUC-KR 이라 한글이 깨지지만, 우리는 코드만 뽑고
+  /// 종목명은 각 코드의 UTF-8 개별 페이지에서 다시 조회해서 채운다.
   Future<List<Ticker>> searchByName(String keyword) async {
     if (keyword.trim().isEmpty) return [];
     final url = Uri.parse(
-      'https://ac.finance.naver.com/ac?q=${Uri.encodeQueryComponent(keyword)}'
-      '&q_enc=UTF-8&t_koreng=1&st=111&r_format=json&r_enc=UTF-8&r_unicode=0'
-      '&t_nm=a&r_lt=111',
+      'https://finance.naver.com/search/searchList.naver'
+      '?query=${Uri.encodeQueryComponent(keyword)}',
     );
     try {
       final r = await http
           .get(url, headers: _headers)
           .timeout(const Duration(seconds: 6));
       if (r.statusCode != 200) return [];
-      final decoded = utf8.decode(r.bodyBytes, allowMalformed: true);
-      final data = json.decode(decoded) as Map<String, dynamic>;
-      final items = <Ticker>[];
-      final groups = data['items'] as List<dynamic>? ?? [];
-      for (final g in groups) {
-        if (g is! List) continue;
-        for (final row in g) {
-          if (row is! List) continue;
-          final nameArr = row.isNotEmpty ? row[0] : null;
-          final codeArr = row.length > 1 ? row[1] : null;
-          if (nameArr is List &&
-              codeArr is List &&
-              nameArr.isNotEmpty &&
-              codeArr.isNotEmpty) {
-            final name = nameArr[0].toString();
-            final code = codeArr[0].toString();
-            if (RegExp(r'^\d{6}$').hasMatch(code)) {
-              items.add(Ticker(code: code, name: name));
-            }
-          }
+
+      // 이 페이지는 EUC-KR 이므로 bytes 를 latin1 그대로 문자열화 하여
+      // 정규식으로 코드만 뽑는다. 종목명 한글은 사용하지 않으므로 인코딩 무관.
+      final html = String.fromCharCodes(r.bodyBytes);
+
+      // <a href="/item/main.naver?code=005930"> ... </a>
+      final codeRe = RegExp(r'href="/item/main\.naver\?code=(\d{6})"');
+      final codes = <String>[];
+      final seen = <String>{};
+      for (final m in codeRe.allMatches(html)) {
+        final code = m.group(1)!;
+        if (seen.add(code)) codes.add(code);
+        if (codes.length >= 10) break;
+      }
+
+      // 각 코드에 대해 이름은 UTF-8 개별 종목 페이지에서 정확히 조회.
+      final results = <Ticker>[];
+      for (final code in codes) {
+        final name = await lookupName(code);
+        if (name != null && name.isNotEmpty) {
+          results.add(Ticker(code: code, name: name));
         }
       }
-      final seen = <String>{};
-      return items.where((e) => seen.add(e.code)).take(10).toList();
+      return results;
     } catch (_) {
       return [];
     }
