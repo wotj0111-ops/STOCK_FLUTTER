@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:workmanager/workmanager.dart';
 
 import 'background_tasks.dart';
 import 'notification_service.dart';
@@ -7,10 +6,15 @@ import 'ticker_list_page.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // 알림 초기화 & 권한 요청
   await NotificationService.instance.init();
   await NotificationService.instance.requestPermissions();
-  await Workmanager().initialize(callbackDispatcher, isInDebugMode: false);
+
+  // 백그라운드 작업 초기화 & 주기적 시세 체크 등록
+  await BackgroundTasks.instance.initialize();
   await BackgroundTasks.instance.registerPeriodicSync();
+
   runApp(const StockApp());
 }
 
@@ -23,13 +27,13 @@ class StockApp extends StatelessWidget {
       title: '내 주식 대시보드',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        useMaterial3: true,
         colorSchemeSeed: Colors.indigo,
+        useMaterial3: true,
         brightness: Brightness.light,
       ),
       darkTheme: ThemeData(
-        useMaterial3: true,
         colorSchemeSeed: Colors.indigo,
+        useMaterial3: true,
         brightness: Brightness.dark,
       ),
       home: const TickerListPage(),

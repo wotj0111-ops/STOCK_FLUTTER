@@ -7,11 +7,10 @@ import 'models.dart';
 import 'notification_service.dart';
 import 'scraper.dart';
 
-/// WorkManager에 등록될 task 고유 이름
+/// WorkManager에 등록되는 task 고유 이름
 const String kStockBackgroundCheckTask = 'stockBackgroundCheckTask';
 
-/// 백그라운드에서 실행되는 진입점.
-/// Android가 앱을 종료해도 이 함수가 호출됩니다.
+/// 백그라운드 실행 진입점 (앱이 종료돼 있어도 호출됨)
 @pragma('vm:entry-point')
 void callbackDispatcher() {
   wm.Workmanager().executeTask((task, inputData) async {
@@ -22,25 +21,28 @@ void callbackDispatcher() {
 
       final db = AppDb.instance;
       final scraper = NaverFinanceScraper();
-      final notifier = NotificationService();
+      final notifier = NotificationService.instance;
 
-      // 알림 채널 초기화 (앱이 종료된 상태에서도 필요)
       await notifier.init();
 
-      final tickers = await db.listWatchlist();
+      final List<Ticker> tickers = await db.listWatchlist();
 
       for (final Ticker t in tickers) {
         try {
-          final price = await scraper.fetchOne(t.code);
+          // ✅ 실제 시그니처에 맞춰 Ticker를 그대로 전달
+          final price = await scraper.fetchOne(t);
           if (price == null) continue;
 
           await db.insertPrice(price);
 
-          // 알림 조건 검사
+          // ✅ named 파라미터 방식으로 호출
           if (t.alertEnabled &&
               t.alertPrice != null &&
               !t.alertTriggered &&
-              shouldTriggerAlert(t, price.price)) {
+              shouldTriggerAlert(
+                ticker: t,
+                currentPrice: price.price,
+              )) {
             await notifier.showTargetReached(t, price.price);
             await db.markAlertTriggered(t.code, true);
           }
@@ -48,7 +50,6 @@ void callbackDispatcher() {
           if (kDebugMode) {
             debugPrint('[bg] ${t.code} 처리 실패: $e');
           }
-          // 개별 종목 실패는 무시하고 다음 종목 진행
           continue;
         }
       }
@@ -62,7 +63,7 @@ void callbackDispatcher() {
   });
 }
 
-/// 백그라운드 작업 관리 클래스
+/// 백그라운드 작업 관리 싱글턴
 class BackgroundTasks {
   BackgroundTasks._();
   static final BackgroundTasks instance = BackgroundTasks._();
@@ -79,30 +80,38 @@ class BackgroundTasks {
     _initialized = true;
   }
 
-  /// 주기적 시세 체크 등록.
-  /// Android WorkManager는 최소 15분 주기까지만 지원합니다.
+  /// 주기적 시세 체크 등록 (Android 최소 15분)
+  ///
+  /// `main.dart` 호환을 위해 `registerPeriodicSync`와 `registerPeriodicCheck`
+  /// 두 이름을 모두 제공합니다.
+  Future<void> registerPeriodicSync({
+    Duration frequency = const Duration(minutes: 15),
+  }) =>
+      _registerPeriodic(frequency);
+
   Future<void> registerPeriodicCheck({
     Duration frequency = const Duration(minutes: 15),
-  }) async {
+  }) =>
+      _registerPeriodic(frequency);
+
+  Future<void> _registerPeriodic(Duration frequency) async {
     await wm.Workmanager().registerPeriodicTask(
       kStockBackgroundCheckTask,
       kStockBackgroundCheckTask,
       frequency: frequency,
-      existingWorkPolicy: wm.ExistingPeriodicWorkPolicy.update,
+      initialDelay: const Duration(seconds: 30),
+      // ⚠️ existingWorkPolicy 는 workmanager 버전에 따라 enum 이름이
+      // (ExistingWorkPolicy / ExistingPeriodicWorkPolicy) 로 다릅니다.
+      // 빌드 호환성을 위해 여기서는 지정하지 않습니다.
+      // 필요 시 pubspec.yaml 의 workmanager 버전 확인 후 다시 추가하세요.
       constraints: wm.Constraints(
         networkType: wm.NetworkType.connected,
-        requiresBatteryNotLow: false,
-        requiresCharging: false,
-        requiresDeviceIdle: false,
-        requiresStorageNotLow: false,
       ),
       backoffPolicy: wm.BackoffPolicy.linear,
       backoffPolicyDelay: const Duration(minutes: 1),
-      initialDelay: const Duration(seconds: 30),
     );
   }
 
-  /// 등록 해제
   Future<void> cancelAll() async {
     await wm.Workmanager().cancelAll();
   }
