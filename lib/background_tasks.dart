@@ -1,68 +1,109 @@
-import 'package:flutter/widgets.dart';
-import 'package:workmanager/workmanager.dart';
+import 'package:flutter/foundation.dart';
+import 'package:workmanager/workmanager.dart' as wm;
 
 import 'alert_logic.dart';
 import 'db.dart';
+import 'models.dart';
 import 'notification_service.dart';
 import 'scraper.dart';
 
-const stockBackgroundCheckTask = 'stockBackgroundCheckTask';
+/// WorkManager에 등록될 task 고유 이름
+const String kStockBackgroundCheckTask = 'stockBackgroundCheckTask';
 
-/// Android WorkManager 기반 백그라운드 점검.
-///
-/// 제한사항:
-/// - Android 주기 작업 최소 간격은 보통 15분 수준이며 1분 단위 보장은 불가
-/// - 제조사/배터리 최적화 정책에 따라 지연될 수 있음
-/// - iOS에서는 현재 프로젝트 범위상 상시 백그라운드 크롤링을 보장하지 않음
+/// 백그라운드에서 실행되는 진입점.
+/// Android가 앱을 종료해도 이 함수가 호출됩니다.
+@pragma('vm:entry-point')
+void callbackDispatcher() {
+  wm.Workmanager().executeTask((task, inputData) async {
+    try {
+      if (task != kStockBackgroundCheckTask) {
+        return Future.value(true);
+      }
+
+      final db = AppDb.instance;
+      final scraper = NaverFinanceScraper();
+      final notifier = NotificationService();
+
+      // 알림 채널 초기화 (앱이 종료된 상태에서도 필요)
+      await notifier.init();
+
+      final tickers = await db.listWatchlist();
+
+      for (final Ticker t in tickers) {
+        try {
+          final price = await scraper.fetchOne(t.code);
+          if (price == null) continue;
+
+          await db.insertPrice(price);
+
+          // 알림 조건 검사
+          if (t.alertEnabled &&
+              t.alertPrice != null &&
+              !t.alertTriggered &&
+              shouldTriggerAlert(t, price.price)) {
+            await notifier.showTargetReached(t, price.price);
+            await db.markAlertTriggered(t.code, true);
+          }
+        } catch (e) {
+          if (kDebugMode) {
+            debugPrint('[bg] ${t.code} 처리 실패: $e');
+          }
+          // 개별 종목 실패는 무시하고 다음 종목 진행
+          continue;
+        }
+      }
+      return Future.value(true);
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('[bg] 전체 실패: $e');
+      }
+      return Future.value(false);
+    }
+  });
+}
+
+/// 백그라운드 작업 관리 클래스
 class BackgroundTasks {
   BackgroundTasks._();
   static final BackgroundTasks instance = BackgroundTasks._();
 
-  Future<void> registerPeriodicSync() async {
-    await Workmanager().registerPeriodicTask(
-      'stock-background-worker',
-      stockBackgroundCheckTask,
-      frequency: const Duration(minutes: 15),
-      existingWorkPolicy: ExistingPeriodicWorkPolicy.update,
-      constraints: Constraints(
-        networkType: NetworkType.connected,
+  bool _initialized = false;
+
+  /// 앱 시작 시 1회 호출
+  Future<void> initialize({bool debug = false}) async {
+    if (_initialized) return;
+    await wm.Workmanager().initialize(
+      callbackDispatcher,
+      isInDebugMode: debug,
+    );
+    _initialized = true;
+  }
+
+  /// 주기적 시세 체크 등록.
+  /// Android WorkManager는 최소 15분 주기까지만 지원합니다.
+  Future<void> registerPeriodicCheck({
+    Duration frequency = const Duration(minutes: 15),
+  }) async {
+    await wm.Workmanager().registerPeriodicTask(
+      kStockBackgroundCheckTask,
+      kStockBackgroundCheckTask,
+      frequency: frequency,
+      existingWorkPolicy: wm.ExistingPeriodicWorkPolicy.update,
+      constraints: wm.Constraints(
+        networkType: wm.NetworkType.connected,
+        requiresBatteryNotLow: false,
+        requiresCharging: false,
+        requiresDeviceIdle: false,
+        requiresStorageNotLow: false,
       ),
-      initialDelay: const Duration(minutes: 15),
-      backoffPolicy: BackoffPolicy.exponential,
-      backoffPolicyDelay: const Duration(minutes: 15),
+      backoffPolicy: wm.BackoffPolicy.linear,
+      backoffPolicyDelay: const Duration(minutes: 1),
+      initialDelay: const Duration(seconds: 30),
     );
   }
-}
 
-@pragma('vm:entry-point')
-void callbackDispatcher() {
-  Workmanager().executeTask((task, inputData) async {
-    WidgetsFlutterBinding.ensureInitialized();
-
-    await NotificationService.instance.init();
-    final scraper = NaverFinanceScraper();
-    final watchlist = await AppDb.instance.listWatchlist();
-
-    for (final t in watchlist) {
-      final previous = await AppDb.instance.latestPrice(t.code);
-      final p = await scraper.fetchOne(t);
-      if (p == null) continue;
-
-      await AppDb.instance.insertPrice(p);
-
-      if (shouldTriggerAlert(
-        ticker: t,
-        currentPrice: p.price,
-        previousPrice: previous?.price,
-      )) {
-        await NotificationService.instance.showTargetReached(
-          ticker: t,
-          price: p,
-        );
-        await AppDb.instance.markAlertTriggered(t.code, true);
-      }
-    }
-
-    return true;
-  });
+  /// 등록 해제
+  Future<void> cancelAll() async {
+    await wm.Workmanager().cancelAll();
+  }
 }

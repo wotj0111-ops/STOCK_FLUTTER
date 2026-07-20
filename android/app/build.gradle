@@ -1,6 +1,7 @@
 plugins {
     id "com.android.application"
     id "kotlin-android"
+    // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id "dev.flutter.flutter-gradle-plugin"
 }
 
@@ -12,13 +13,31 @@ if (localPropertiesFile.exists()) {
     }
 }
 
-def flutterVersionCode = localProperties.getProperty('flutter.versionCode') ?: '1'
-def flutterVersionName = localProperties.getProperty('flutter.versionName') ?: '1.0'
+def flutterVersionCode = localProperties.getProperty('flutter.versionCode')
+if (flutterVersionCode == null) {
+    flutterVersionCode = '1'
+}
+
+def flutterVersionName = localProperties.getProperty('flutter.versionName')
+if (flutterVersionName == null) {
+    flutterVersionName = '1.0'
+}
+
+// (선택) 릴리스 서명용 key.properties 로드
+def keystoreProperties = new Properties()
+def keystorePropertiesFile = rootProject.file('key.properties')
+if (keystorePropertiesFile.exists()) {
+    keystorePropertiesFile.withReader('UTF-8') { reader ->
+        keystoreProperties.load(reader)
+    }
+}
 
 android {
     namespace "com.example.stock_app"
-    compileSdk 34
-    ndkVersion flutter.ndkVersion
+    compileSdkVersion 34
+
+    // ⚠️ 플러그인들이 요구하는 NDK 버전으로 통일
+    ndkVersion "25.1.8937393"
 
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
@@ -35,47 +54,43 @@ android {
 
     defaultConfig {
         applicationId "com.example.stock_app"
-        minSdk 23
-        targetSdk 34
+        minSdkVersion 23
+        targetSdkVersion 34
         versionCode flutterVersionCode.toInteger()
         versionName flutterVersionName
-    }
-
-    // ─────────────────────────────────────────────────────────────
-    // 서명 설정:
-    //   1) 개인 배포: 아래 release 블록을 그대로 두면 debug 키로 서명한다.
-    //      → 본인 폰에 설치는 되지만, 다른 사람 배포에는 부적절.
-    //   2) 정식 릴리스: android/key.properties 를 만들고 keystore 경로/비번을 넣으면
-    //      자동으로 릴리스 서명으로 전환된다. (README 참고)
-    // ─────────────────────────────────────────────────────────────
-    def keyPropsFile = rootProject.file('key.properties')
-    def keyProps = new Properties()
-    if (keyPropsFile.exists()) {
-        keyProps.load(new FileInputStream(keyPropsFile))
+        multiDexEnabled true
     }
 
     signingConfigs {
         release {
-            if (keyPropsFile.exists()) {
-                keyAlias keyProps['keyAlias']
-                keyPassword keyProps['keyPassword']
-                storeFile file(keyProps['storeFile'])
-                storePassword keyProps['storePassword']
+            if (keystorePropertiesFile.exists()) {
+                keyAlias keystoreProperties['keyAlias']
+                keyPassword keystoreProperties['keyPassword']
+                storeFile file(keystoreProperties['storeFile'])
+                storePassword keystoreProperties['storePassword']
             }
         }
     }
 
     buildTypes {
         release {
-            signingConfig keyPropsFile.exists()
-                ? signingConfigs.release
-                : signingConfigs.debug
+            // key.properties가 있으면 릴리스 키, 없으면 debug 키로 서명
+            signingConfig keystorePropertiesFile.exists()
+                    ? signingConfigs.release
+                    : signingConfigs.debug
             minifyEnabled false
             shrinkResources false
+        }
+        debug {
+            signingConfig signingConfigs.debug
         }
     }
 }
 
 flutter {
     source '../..'
+}
+
+dependencies {
+    implementation "org.jetbrains.kotlin:kotlin-stdlib:1.9.10"
 }
