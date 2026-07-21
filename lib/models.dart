@@ -1,7 +1,5 @@
-/// 알림 방향: 목표가 이상으로 오르면 알림 / 목표가 이하로 떨어지면 알림
 enum AlertDirection { above, below }
 
-/// 감시 대상 종목 (사용자가 추가/삭제 + 알림 설정).
 class Ticker {
   final String code;
   final String name;
@@ -10,6 +8,7 @@ class Ticker {
   final bool alertEnabled;
   final bool alertTriggered;
   final AlertDirection alertDirection;
+  final int sortOrder;
 
   const Ticker({
     required this.code,
@@ -19,6 +18,7 @@ class Ticker {
     this.alertEnabled = false,
     this.alertTriggered = false,
     this.alertDirection = AlertDirection.above,
+    this.sortOrder = 0,
   });
 
   Ticker copyWith({
@@ -29,6 +29,7 @@ class Ticker {
     bool? alertEnabled,
     bool? alertTriggered,
     AlertDirection? alertDirection,
+    int? sortOrder,
     bool clearAvgPrice = false,
     bool clearAlertPrice = false,
   }) {
@@ -40,6 +41,7 @@ class Ticker {
       alertEnabled: alertEnabled ?? this.alertEnabled,
       alertTriggered: alertTriggered ?? this.alertTriggered,
       alertDirection: alertDirection ?? this.alertDirection,
+      sortOrder: sortOrder ?? this.sortOrder,
     );
   }
 
@@ -52,6 +54,7 @@ class Ticker {
         'alert_triggered': alertTriggered ? 1 : 0,
         'alert_direction':
             alertDirection == AlertDirection.above ? 'above' : 'below',
+        'sort_order': sortOrder,
       };
 
   factory Ticker.fromMap(Map<String, Object?> m) => Ticker(
@@ -64,10 +67,10 @@ class Ticker {
         alertDirection: (m['alert_direction'] as String?) == 'below'
             ? AlertDirection.below
             : AlertDirection.above,
+        sortOrder: (m['sort_order'] as num?)?.toInt() ?? 0,
       );
 }
 
-/// 특정 시각의 시세 스냅샷.
 class PricePoint {
   final DateTime tsKst;
   final String code;

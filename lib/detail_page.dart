@@ -29,7 +29,6 @@ class _DetailPageState extends State<DetailPage> with WidgetsBindingObserver {
   Ticker _t = const Ticker(code: '', name: '');
   PricePoint? _price;
   AlertDirection _direction = AlertDirection.above;
-  bool _enabled = false;
 
   Timer? _pollTimer;
   static const _pollInterval = Duration(seconds: 10);
@@ -40,7 +39,6 @@ class _DetailPageState extends State<DetailPage> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     _t = widget.ticker;
     _direction = _t.alertDirection;
-    _enabled = _t.alertEnabled;
     _avgCtl = TextEditingController(text: _t.avgPrice?.toString() ?? '');
     _alertCtl = TextEditingController(text: _t.alertPrice?.toString() ?? '');
     _startPolling();
@@ -85,34 +83,35 @@ class _DetailPageState extends State<DetailPage> with WidgetsBindingObserver {
     } catch (_) {}
   }
 
+  /// 저장: 알림 활성화 상태로 등록
   Future<void> _save() async {
     final alertText = _alertCtl.text.trim();
-    if (_enabled && alertText.isEmpty) {
+    if (alertText.isEmpty) {
       _snack('알림 가격을 입력해 주세요.');
       return;
     }
-    final alertPrice = alertText.isEmpty ? null : int.tryParse(alertText);
-    final avgPrice =
-        _avgCtl.text.trim().isEmpty ? null : int.tryParse(_avgCtl.text.trim());
-
-    if (_enabled && alertPrice == null) {
+    final alertPrice = int.tryParse(alertText);
+    if (alertPrice == null) {
       _snack('알림 가격은 숫자만 입력 가능합니다.');
       return;
     }
+    final avgPrice =
+        _avgCtl.text.trim().isEmpty ? null : int.tryParse(_avgCtl.text.trim());
 
     await _db.updateAlertSettings(
       code: _t.code,
       avgPrice: avgPrice,
       alertPrice: alertPrice,
-      alertEnabled: _enabled,
+      alertEnabled: true,
       alertDirection: _direction,
     );
     final updated = await _db.getTicker(_t.code);
     if (!mounted) return;
     setState(() => _t = updated ?? _t);
-    _snack('알림 설정이 저장되었습니다.');
+    _snack('알림이 저장되었습니다.');
   }
 
+  /// 초기화: 알림 완전 제거
   Future<void> _reset() async {
     await _db.updateAlertSettings(
       code: _t.code,
@@ -121,20 +120,19 @@ class _DetailPageState extends State<DetailPage> with WidgetsBindingObserver {
       alertEnabled: false,
       alertDirection: AlertDirection.above,
     );
+    final updated = await _db.getTicker(_t.code);
     if (!mounted) return;
     setState(() {
-      _enabled = false;
+      _t = updated ?? _t;
       _direction = AlertDirection.above;
       _avgCtl.clear();
       _alertCtl.clear();
     });
-    _snack('알림 설정이 초기화되었습니다.');
+    _snack('알림이 제거되었습니다.');
   }
 
   void _snack(String msg) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(msg)),
-    );
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
   }
 
   @override
@@ -225,10 +223,8 @@ class _DetailPageState extends State<DetailPage> with WidgetsBindingObserver {
           const SizedBox(height: 18),
           Text(
             p == null ? '-' : '${_won.format(p.price)}원',
-            style: theme.textTheme.displaySmall?.copyWith(
-              color: color,
-              fontWeight: FontWeight.bold,
-            ),
+            style: theme.textTheme.displaySmall
+                ?.copyWith(color: color, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 6),
           Text(
@@ -240,16 +236,12 @@ class _DetailPageState extends State<DetailPage> with WidgetsBindingObserver {
           ),
           if (p != null) ...[
             const SizedBox(height: 12),
-            Text(
-              '거래량: ${p.volume == null ? '-' : _won.format(p.volume)}',
-              style:
-                  theme.textTheme.bodySmall?.copyWith(color: theme.hintColor),
-            ),
-            Text(
-              '업데이트: ${DateFormat('HH:mm:ss').format(p.tsKst)}',
-              style:
-                  theme.textTheme.bodySmall?.copyWith(color: theme.hintColor),
-            ),
+            Text('거래량: ${p.volume == null ? '-' : _won.format(p.volume)}',
+                style: theme.textTheme.bodySmall
+                    ?.copyWith(color: theme.hintColor)),
+            Text('업데이트: ${DateFormat('HH:mm:ss').format(p.tsKst)}',
+                style: theme.textTheme.bodySmall
+                    ?.copyWith(color: theme.hintColor)),
           ],
         ],
       ),
@@ -257,6 +249,7 @@ class _DetailPageState extends State<DetailPage> with WidgetsBindingObserver {
   }
 
   Widget _alertCard(ThemeData theme) {
+    final hasAlert = _t.alertEnabled && _t.alertPrice != null;
     return Card(
       elevation: 0,
       shape: RoundedRectangleBorder(
@@ -277,10 +270,17 @@ class _DetailPageState extends State<DetailPage> with WidgetsBindingObserver {
                     style: theme.textTheme.titleMedium
                         ?.copyWith(fontWeight: FontWeight.bold)),
                 const Spacer(),
-                Switch(
-                  value: _enabled,
-                  onChanged: (v) => setState(() => _enabled = v),
-                ),
+                if (hasAlert)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: Colors.green.withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: const Text('설정됨',
+                        style: TextStyle(fontSize: 11, color: Colors.green)),
+                  ),
               ],
             ),
             const SizedBox(height: 12),
@@ -315,23 +315,19 @@ class _DetailPageState extends State<DetailPage> with WidgetsBindingObserver {
             Row(
               children: [
                 Expanded(
-                  child: _directionTile(
-                    theme,
-                    dir: AlertDirection.above,
-                    label: '이 가격 이상으로 오르면',
-                    icon: Icons.arrow_upward,
-                    color: Colors.red.shade600,
-                  ),
+                  child: _directionTile(theme,
+                      dir: AlertDirection.above,
+                      label: '이 가격 이상으로 오르면',
+                      icon: Icons.arrow_upward,
+                      color: Colors.red.shade600),
                 ),
                 const SizedBox(width: 8),
                 Expanded(
-                  child: _directionTile(
-                    theme,
-                    dir: AlertDirection.below,
-                    label: '이 가격 이하로 떨어지면',
-                    icon: Icons.arrow_downward,
-                    color: Colors.blue.shade600,
-                  ),
+                  child: _directionTile(theme,
+                      dir: AlertDirection.below,
+                      label: '이 가격 이하로 떨어지면',
+                      icon: Icons.arrow_downward,
+                      color: Colors.blue.shade600),
                 ),
               ],
             ),
@@ -341,7 +337,7 @@ class _DetailPageState extends State<DetailPage> with WidgetsBindingObserver {
                 Expanded(
                   child: OutlinedButton.icon(
                     onPressed: _reset,
-                    icon: const Icon(Icons.refresh),
+                    icon: const Icon(Icons.delete_outline),
                     label: const Text('초기화'),
                   ),
                 ),

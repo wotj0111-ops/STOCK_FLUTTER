@@ -4,10 +4,6 @@ import 'package:sqflite/sqflite.dart';
 
 import 'models.dart';
 
-/// 폰 내부 SQLite (sqflite) 저장소.
-/// - watchlist: 사용자가 추가한 종목 + 알림 설정
-/// - prices: 시계열 스냅샷
-/// - stocks: 종목 카탈로그 (번들 CSV + KRX 갱신)
 class AppDb {
   AppDb._();
   static final AppDb instance = AppDb._();
@@ -19,7 +15,7 @@ class AppDb {
     final path = p.join(dir.path, 'stock_data.db');
     _db = await openDatabase(
       path,
-      version: 4,
+      version: 5,
       onCreate: (db, v) async {
         await db.execute('''
           CREATE TABLE watchlist (
@@ -30,7 +26,8 @@ class AppDb {
             alert_price INTEGER,
             alert_enabled INTEGER NOT NULL DEFAULT 0,
             alert_triggered INTEGER NOT NULL DEFAULT 0,
-            alert_direction TEXT NOT NULL DEFAULT 'above'
+            alert_direction TEXT NOT NULL DEFAULT 'above',
+            sort_order INTEGER NOT NULL DEFAULT 0
           )
         ''');
         await db.execute('''
@@ -46,8 +43,7 @@ class AppDb {
           )
         ''');
         await db.execute(
-          'CREATE INDEX idx_prices_code_ts ON prices(code, ts_kst)',
-        );
+            'CREATE INDEX idx_prices_code_ts ON prices(code, ts_kst)');
         await db.execute('''
           CREATE TABLE stocks (
             code TEXT PRIMARY KEY,
@@ -64,16 +60,13 @@ class AppDb {
           await db.execute('ALTER TABLE watchlist ADD COLUMN avg_price INTEGER');
           await db.execute('ALTER TABLE watchlist ADD COLUMN alert_price INTEGER');
           await db.execute(
-            'ALTER TABLE watchlist ADD COLUMN alert_enabled INTEGER NOT NULL DEFAULT 0',
-          );
+              'ALTER TABLE watchlist ADD COLUMN alert_enabled INTEGER NOT NULL DEFAULT 0');
           await db.execute(
-            'ALTER TABLE watchlist ADD COLUMN alert_triggered INTEGER NOT NULL DEFAULT 0',
-          );
+              'ALTER TABLE watchlist ADD COLUMN alert_triggered INTEGER NOT NULL DEFAULT 0');
         }
         if (oldVersion < 3) {
           await db.execute(
-            "ALTER TABLE watchlist ADD COLUMN alert_direction TEXT NOT NULL DEFAULT 'above'",
-          );
+              "ALTER TABLE watchlist ADD COLUMN alert_direction TEXT NOT NULL DEFAULT 'above'");
         }
         if (oldVersion < 4) {
           await db.execute('''
@@ -87,6 +80,16 @@ class AppDb {
           await db.execute(
               'CREATE INDEX IF NOT EXISTS idx_stocks_name ON stocks(name)');
         }
+        if (oldVersion < 5) {
+          await db.execute(
+              'ALTER TABLE watchlist ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0');
+          // 기존 데이터에 added_at 기준으로 순번 부여
+          final rows = await db.query('watchlist', orderBy: 'added_at ASC');
+          for (var i = 0; i < rows.length; i++) {
+            await db.update('watchlist', {'sort_order': i},
+                where: 'code = ?', whereArgs: [rows[i]['code']]);
+          }
+        }
       },
     );
     return _db!;
@@ -94,11 +97,13 @@ class AppDb {
 
   Future<void> _seed(Database db) async {
     final now = DateTime.now().toIso8601String();
-    for (final t in const [
+    const seeds = [
       Ticker(code: '005930', name: '삼성전자'),
       Ticker(code: '000660', name: 'SK하이닉스'),
       Ticker(code: '035720', name: '카카오'),
-    ]) {
+    ];
+    for (var i = 0; i < seeds.length; i++) {
+      final t = seeds[i];
       await db.insert('watchlist', {
         'code': t.code,
         'name': t.name,
@@ -108,29 +113,31 @@ class AppDb {
         'alert_enabled': t.alertEnabled ? 1 : 0,
         'alert_triggered': t.alertTriggered ? 1 : 0,
         'alert_direction': 'above',
+        'sort_order': i,
       });
     }
   }
 
-  // ───── watchlist ─────
   Future<List<Ticker>> listWatchlist() async {
-    final rows = await (await db).query('watchlist', orderBy: 'added_at ASC');
+    final rows = await (await db)
+        .query('watchlist', orderBy: 'sort_order ASC, added_at ASC');
     return rows.map((r) => Ticker.fromMap(r)).toList();
   }
 
   Future<Ticker?> getTicker(String code) async {
-    final rows = await (await db).query(
-      'watchlist',
-      where: 'code = ?',
-      whereArgs: [code],
-      limit: 1,
-    );
+    final rows = await (await db).query('watchlist',
+        where: 'code = ?', whereArgs: [code], limit: 1);
     if (rows.isEmpty) return null;
     return Ticker.fromMap(rows.first);
   }
 
   Future<void> addWatch(Ticker t) async {
-    await (await db).insert(
+    final d = await db;
+    // 새 종목은 맨 뒤에
+    final maxRow = await d.rawQuery(
+        'SELECT COALESCE(MAX(sort_order), -1) + 1 AS next FROM watchlist');
+    final next = (maxRow.first['next'] as num?)?.toInt() ?? 0;
+    await d.insert(
       'watchlist',
       {
         'code': t.code,
@@ -142,6 +149,7 @@ class AppDb {
         'alert_triggered': t.alertTriggered ? 1 : 0,
         'alert_direction':
             t.alertDirection == AlertDirection.above ? 'above' : 'below',
+        'sort_order': next,
       },
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
@@ -170,12 +178,9 @@ class AppDb {
   }
 
   Future<void> markAlertTriggered(String code, bool triggered) async {
-    await (await db).update(
-      'watchlist',
-      {'alert_triggered': triggered ? 1 : 0},
-      where: 'code = ?',
-      whereArgs: [code],
-    );
+    await (await db).update('watchlist',
+        {'alert_triggered': triggered ? 1 : 0},
+        where: 'code = ?', whereArgs: [code]);
   }
 
   Future<void> removeWatch(String code) async {
@@ -183,39 +188,42 @@ class AppDb {
     await (await db).delete('prices', where: 'code = ?', whereArgs: [code]);
   }
 
-  // ───── prices ─────
+  /// 목록 순서 저장 (드래그 앤 드롭 결과)
+  Future<void> reorderWatchlist(List<String> codesInOrder) async {
+    final d = await db;
+    final batch = d.batch();
+    for (var i = 0; i < codesInOrder.length; i++) {
+      batch.update('watchlist', {'sort_order': i},
+          where: 'code = ?', whereArgs: [codesInOrder[i]]);
+    }
+    await batch.commit(noResult: true);
+  }
+
   Future<void> insertPrice(PricePoint p) async {
-    await (await db).insert(
-      'prices',
-      p.toMap(),
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
+    await (await db).insert('prices', p.toMap(),
+        conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   Future<PricePoint?> latestPrice(String code) async {
-    final rows = await (await db).query(
-      'prices',
-      where: 'code = ?',
-      whereArgs: [code],
-      orderBy: 'ts_kst DESC',
-      limit: 1,
-    );
+    final rows = await (await db).query('prices',
+        where: 'code = ?',
+        whereArgs: [code],
+        orderBy: 'ts_kst DESC',
+        limit: 1);
     if (rows.isEmpty) return null;
     return PricePoint.fromMap(rows.first);
   }
 
   Future<List<PricePoint>> history(String code, {int limit = 240}) async {
-    final rows = await (await db).query(
-      'prices',
-      where: 'code = ?',
-      whereArgs: [code],
-      orderBy: 'ts_kst DESC',
-      limit: limit,
-    );
+    final rows = await (await db).query('prices',
+        where: 'code = ?',
+        whereArgs: [code],
+        orderBy: 'ts_kst DESC',
+        limit: limit);
     return rows.map(PricePoint.fromMap).toList().reversed.toList();
   }
 
-  // ───── stocks (카탈로그) ─────
+  // ─── stocks (카탈로그) ─────
   Future<int> stocksCount() async {
     final r = await (await db).rawQuery('SELECT COUNT(*) c FROM stocks');
     return (r.first['c'] as int?) ?? 0;
@@ -227,15 +235,14 @@ class AppDb {
     final batch = d.batch();
     for (final r in rows) {
       batch.insert(
-        'stocks',
-        {
-          'code': r['code'],
-          'name': r['name'],
-          'market': r['market'],
-          'updated_at': now,
-        },
-        conflictAlgorithm: ConflictAlgorithm.replace,
-      );
+          'stocks',
+          {
+            'code': r['code'],
+            'name': r['name'],
+            'market': r['market'],
+            'updated_at': now,
+          },
+          conflictAlgorithm: ConflictAlgorithm.replace);
     }
     await batch.commit(noResult: true);
   }

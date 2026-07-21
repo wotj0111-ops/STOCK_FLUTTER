@@ -102,7 +102,7 @@ class _TickerListPageState extends State<TickerListPage>
     }
   }
 
-  Future<void> _confirmRemove(Ticker t) async {
+  Future<bool> _confirmRemove(Ticker t) async {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -118,10 +118,16 @@ class _TickerListPageState extends State<TickerListPage>
         ],
       ),
     );
-    if (ok == true) {
-      await _db.removeWatch(t.code);
-      await _reload();
-    }
+    return ok == true;
+  }
+
+  Future<void> _onReorder(int oldIndex, int newIndex) async {
+    setState(() {
+      if (newIndex > oldIndex) newIndex -= 1;
+      final moved = _tickers.removeAt(oldIndex);
+      _tickers.insert(newIndex, moved);
+    });
+    await _db.reorderWatchlist(_tickers.map((e) => e.code).toList());
   }
 
   @override
@@ -147,15 +153,63 @@ class _TickerListPageState extends State<TickerListPage>
           ? const Center(child: CircularProgressIndicator())
           : _tickers.isEmpty
               ? _emptyState(theme)
-              : RefreshIndicator(
-                  onRefresh: _pollOnce,
-                  child: ListView.separated(
-                    padding: const EdgeInsets.fromLTRB(12, 12, 12, 100),
-                    itemCount: _tickers.length,
-                    separatorBuilder: (_, __) => const SizedBox(height: 10),
-                    itemBuilder: (_, i) => _tickerCard(_tickers[i]),
+              : ReorderableListView.builder(
+                  padding: const EdgeInsets.fromLTRB(12, 12, 12, 100),
+                  itemCount: _tickers.length,
+                  onReorder: _onReorder,
+                  proxyDecorator: (child, index, animation) => Material(
+                    color: Colors.transparent,
+                    elevation: 6,
+                    borderRadius: BorderRadius.circular(16),
+                    child: child,
                   ),
+                  itemBuilder: (_, i) {
+                    final t = _tickers[i];
+                    return Padding(
+                      key: ValueKey(t.code),
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: Dismissible(
+                        key: ValueKey('dis_${t.code}'),
+                        direction: DismissDirection.endToStart,
+                        background: _swipeDeleteBackground(theme),
+                        confirmDismiss: (_) => _confirmRemove(t),
+                        onDismissed: (_) async {
+                          await _db.removeWatch(t.code);
+                          if (!mounted) return;
+                          setState(() => _tickers.removeAt(i));
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text('${t.name} 종목을 삭제했습니다.'),
+                              duration: const Duration(seconds: 2),
+                            ),
+                          );
+                        },
+                        child: _tickerCard(t),
+                      ),
+                    );
+                  },
                 ),
+    );
+  }
+
+  Widget _swipeDeleteBackground(ThemeData theme) {
+    return Container(
+      alignment: Alignment.centerRight,
+      padding: const EdgeInsets.symmetric(horizontal: 24),
+      decoration: BoxDecoration(
+        color: Colors.red.shade500,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: const Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.delete_outline, color: Colors.white),
+          SizedBox(width: 6),
+          Text('삭제',
+              style: TextStyle(
+                  color: Colors.white, fontWeight: FontWeight.bold)),
+        ],
+      ),
     );
   }
 
@@ -199,7 +253,6 @@ class _TickerListPageState extends State<TickerListPage>
           );
           _reload();
         },
-        onLongPress: () => _confirmRemove(t),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
           child: Row(
@@ -255,6 +308,13 @@ class _TickerListPageState extends State<TickerListPage>
                           ?.copyWith(color: priceColor)),
                 ],
               ),
+              const SizedBox(width: 8),
+              // 길게 눌러 드래그하기 위한 핸들 (ReorderableListView가 자동 감지)
+              ReorderableDragStartListener(
+                index: _tickers.indexOf(t),
+                child: Icon(Icons.drag_indicator,
+                    color: theme.hintColor.withOpacity(0.7)),
+              ),
             ],
           ),
         ),
@@ -289,7 +349,7 @@ class _TickerListPageState extends State<TickerListPage>
   }
 }
 
-/// 종목 추가 다이얼로그 — 100% 로컬 검색 + KRX 수동 갱신 버튼
+/// 종목 추가 다이얼로그 (그대로 유지)
 class _AddTickerDialog extends StatefulWidget {
   final NaverFinanceScraper scraper;
   const _AddTickerDialog({required this.scraper});
@@ -349,9 +409,7 @@ class _AddTickerDialogState extends State<_AddTickerDialog> {
     setState(() => _refreshing = false);
     await _loadLastRefreshed();
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-          content:
-              Text(ok ? '종목 목록을 최신으로 갱신했습니다.' : '갱신에 실패했습니다.')),
+      SnackBar(content: Text(ok ? '종목 목록을 최신으로 갱신했습니다.' : '갱신에 실패했습니다.')),
     );
     if (_ctl.text.isNotEmpty) _onChanged(_ctl.text);
   }
