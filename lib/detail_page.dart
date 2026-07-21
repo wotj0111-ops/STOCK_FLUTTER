@@ -158,7 +158,7 @@ class _DetailPageState extends State<DetailPage> with WidgetsBindingObserver {
           const SizedBox(height: 16),
           _alertCard(theme),
           const SizedBox(height: 16),
-          NewsSection(code: _t.code),
+          NewsSection(code: _t.code, name: _t.name),
         ],
       ),
     );
@@ -242,11 +242,13 @@ class _DetailPageState extends State<DetailPage> with WidgetsBindingObserver {
             const SizedBox(height: 12),
             Text(
               '거래량: ${p.volume == null ? '-' : _won.format(p.volume)}',
-              style: theme.textTheme.bodySmall?.copyWith(color: theme.hintColor),
+              style:
+                  theme.textTheme.bodySmall?.copyWith(color: theme.hintColor),
             ),
             Text(
               '업데이트: ${DateFormat('HH:mm:ss').format(p.tsKst)}',
-              style: theme.textTheme.bodySmall?.copyWith(color: theme.hintColor),
+              style:
+                  theme.textTheme.bodySmall?.copyWith(color: theme.hintColor),
             ),
           ],
         ],
