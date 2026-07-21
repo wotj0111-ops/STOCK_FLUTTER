@@ -228,6 +228,10 @@ class _TickerListPageState extends State<TickerListPage>
         ),
       );
 
+  /// 새 카드 레이아웃:
+  ///  [Row 1]  종목명 · (코드)                          가격
+  ///  [Row 2]  알림 뱃지 (또는 '알림 미설정')           등락 · 등락률
+  ///  [우측]   드래그 핸들
   Widget _tickerCard(Ticker t) {
     final theme = Theme.of(context);
     final p = _prices[t.code];
@@ -256,60 +260,78 @@ class _TickerListPageState extends State<TickerListPage>
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
           child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              CircleAvatar(
-                radius: 22,
-                backgroundColor: theme.colorScheme.primaryContainer,
-                child: Text(t.name.characters.first,
-                    style: TextStyle(
-                        color: theme.colorScheme.onPrimaryContainer,
-                        fontWeight: FontWeight.bold)),
-              ),
-              const SizedBox(width: 12),
+              // 본문 (2행 레이아웃)
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(children: [
-                      Flexible(
-                          child: Text(t.name,
-                              style: theme.textTheme.titleMedium
-                                  ?.copyWith(fontWeight: FontWeight.w600),
-                              overflow: TextOverflow.ellipsis)),
-                      const SizedBox(width: 6),
-                      Text(t.code,
+                    // ── Row 1: 이름/코드  ────────  현재가
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Row(
+                            children: [
+                              Flexible(
+                                child: Text(
+                                  t.name,
+                                  style: theme.textTheme.titleMedium?.copyWith(
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                              const SizedBox(width: 6),
+                              Text(
+                                t.code,
+                                style: theme.textTheme.bodySmall
+                                    ?.copyWith(color: theme.hintColor),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Text(
+                          p == null ? '-' : '${_won.format(p.price)}원',
+                          style: theme.textTheme.titleMedium?.copyWith(
+                            color: priceColor,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    // ── Row 2: 알림 뱃지  ────────  등락 · 등락률
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        Expanded(
+                          child: (t.alertEnabled && t.alertPrice != null)
+                              ? _alertBadge(t)
+                              : Text(
+                                  '알림 미설정',
+                                  style: theme.textTheme.bodySmall
+                                      ?.copyWith(color: theme.hintColor),
+                                ),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          p == null
+                              ? ''
+                              : '${p.change >= 0 ? '+' : ''}${_won.format(p.change)}'
+                                  ' (${p.changePct.toStringAsFixed(2)}%)',
                           style: theme.textTheme.bodySmall
-                              ?.copyWith(color: theme.hintColor)),
-                    ]),
-                    const SizedBox(height: 4),
-                    if (t.alertEnabled && t.alertPrice != null)
-                      _alertBadge(t)
-                    else
-                      Text('알림 미설정',
-                          style: theme.textTheme.bodySmall
-                              ?.copyWith(color: theme.hintColor)),
+                              ?.copyWith(color: priceColor),
+                        ),
+                      ],
+                    ),
                   ],
                 ),
               ),
-              const SizedBox(width: 8),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Text(p == null ? '-' : '${_won.format(p.price)}원',
-                      style: theme.textTheme.titleMedium?.copyWith(
-                          color: priceColor, fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 2),
-                  Text(
-                      p == null
-                          ? ''
-                          : '${p.change >= 0 ? '+' : ''}${_won.format(p.change)}'
-                              ' (${p.changePct.toStringAsFixed(2)}%)',
-                      style: theme.textTheme.bodySmall
-                          ?.copyWith(color: priceColor)),
-                ],
-              ),
-              const SizedBox(width: 8),
-              // 길게 눌러 드래그하기 위한 핸들 (ReorderableListView가 자동 감지)
+              const SizedBox(width: 6),
+              // 드래그 핸들 (길게 눌러 순서 변경)
               ReorderableDragStartListener(
                 index: _tickers.indexOf(t),
                 child: Icon(Icons.drag_indicator,
@@ -326,19 +348,25 @@ class _TickerListPageState extends State<TickerListPage>
     final isAbove = t.alertDirection == AlertDirection.above;
     final color = isAbove ? Colors.red.shade600 : Colors.blue.shade600;
     final icon = isAbove ? Icons.arrow_upward : Icons.arrow_downward;
-    final label = isAbove ? '상승 알림' : '하락 알림';
+    final label = isAbove ? '상승' : '하락';
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
-          color: color.withOpacity(0.1),
-          borderRadius: BorderRadius.circular(20)),
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(20),
+      ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(icon, size: 12, color: color),
           const SizedBox(width: 4),
-          Text('$label · ${_won.format(t.alertPrice)}원',
-              style: TextStyle(color: color, fontSize: 12)),
+          Flexible(
+            child: Text(
+              '$label · ${_won.format(t.alertPrice)}원',
+              style: TextStyle(color: color, fontSize: 12),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
           if (t.alertTriggered) ...[
             const SizedBox(width: 4),
             Icon(Icons.check_circle, size: 12, color: color),
@@ -349,7 +377,7 @@ class _TickerListPageState extends State<TickerListPage>
   }
 }
 
-/// 종목 추가 다이얼로그 (그대로 유지)
+/// 종목 추가 다이얼로그 (기존 그대로)
 class _AddTickerDialog extends StatefulWidget {
   final NaverFinanceScraper scraper;
   const _AddTickerDialog({required this.scraper});

@@ -88,14 +88,28 @@ class StockNewsService {
           dateKst: _parseRfc822ToKst(pubDate),
           snippet: '',
         ));
-        if (items.length >= limit) break;
       }
 
-      final keywords = _extractKeywords(items.map((e) => e.title).toList());
-      final headline = items.isEmpty
+      // ── 최신순 정렬 (dateKst DESC). 날짜가 없는 항목은 뒤로.
+      items.sort((a, b) {
+        final ad = a.dateKst;
+        final bd = b.dateKst;
+        if (ad == null && bd == null) return 0;
+        if (ad == null) return 1;
+        if (bd == null) return -1;
+        return bd.compareTo(ad);
+      });
+
+      // 정렬 후 상위 [limit] 개만 사용
+      final trimmed =
+          items.length > limit ? items.sublist(0, limit) : items;
+
+      final keywords = _extractKeywords(trimmed.map((e) => e.title).toList());
+      final headline = trimmed.isEmpty
           ? '관련 뉴스가 없습니다.'
-          : _buildHeadline(items, keywords);
-      return NewsSummary(items: items, keywords: keywords, headline: headline);
+          : _buildHeadline(trimmed, keywords);
+      return NewsSummary(
+          items: trimmed, keywords: keywords, headline: headline);
     } catch (_) {
       return NewsSummary(
         items: const [],
@@ -105,7 +119,7 @@ class StockNewsService {
     }
   }
 
-  /// "Sun, 20 Jul 2026 05:12:00 GMT" → KST DateTime
+  /// "Sun, 21 Jul 2026 05:12:00 GMT" → KST DateTime
   DateTime? _parseRfc822ToKst(String s) {
     if (s.isEmpty) return null;
     final months = {

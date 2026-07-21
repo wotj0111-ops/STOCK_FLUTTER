@@ -39,8 +39,12 @@ class _DetailPageState extends State<DetailPage> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     _t = widget.ticker;
     _direction = _t.alertDirection;
-    _avgCtl = TextEditingController(text: _t.avgPrice?.toString() ?? '');
-    _alertCtl = TextEditingController(text: _t.alertPrice?.toString() ?? '');
+    _avgCtl = TextEditingController(
+      text: _t.avgPrice == null ? '' : _won.format(_t.avgPrice),
+    );
+    _alertCtl = TextEditingController(
+      text: _t.alertPrice == null ? '' : _won.format(_t.alertPrice),
+    );
     _startPolling();
   }
 
@@ -83,20 +87,19 @@ class _DetailPageState extends State<DetailPage> with WidgetsBindingObserver {
     } catch (_) {}
   }
 
-  /// 저장: 알림 활성화 상태로 등록
+  int? _parseAmount(String s) {
+    final digits = s.replaceAll(RegExp(r'[^\d]'), '');
+    if (digits.isEmpty) return null;
+    return int.tryParse(digits);
+  }
+
   Future<void> _save() async {
-    final alertText = _alertCtl.text.trim();
-    if (alertText.isEmpty) {
+    final alertPrice = _parseAmount(_alertCtl.text);
+    if (alertPrice == null) {
       _snack('알림 가격을 입력해 주세요.');
       return;
     }
-    final alertPrice = int.tryParse(alertText);
-    if (alertPrice == null) {
-      _snack('알림 가격은 숫자만 입력 가능합니다.');
-      return;
-    }
-    final avgPrice =
-        _avgCtl.text.trim().isEmpty ? null : int.tryParse(_avgCtl.text.trim());
+    final avgPrice = _parseAmount(_avgCtl.text);
 
     await _db.updateAlertSettings(
       code: _t.code,
@@ -111,7 +114,6 @@ class _DetailPageState extends State<DetailPage> with WidgetsBindingObserver {
     _snack('알림이 저장되었습니다.');
   }
 
-  /// 초기화: 알림 완전 제거
   Future<void> _reset() async {
     await _db.updateAlertSettings(
       code: _t.code,
@@ -287,10 +289,14 @@ class _DetailPageState extends State<DetailPage> with WidgetsBindingObserver {
             TextField(
               controller: _avgCtl,
               keyboardType: TextInputType.number,
-              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+              inputFormatters: [
+                FilteringTextInputFormatter.digitsOnly,
+                _ThousandsFormatter(),
+              ],
               decoration: const InputDecoration(
                 labelText: '평단가 (선택)',
-                hintText: '참고용 · 필수 아님',
+                hintText: '참고용 · 예) 65,000',
+                suffixText: '원',
                 prefixIcon: Icon(Icons.savings_outlined),
                 border: OutlineInputBorder(),
               ),
@@ -299,10 +305,14 @@ class _DetailPageState extends State<DetailPage> with WidgetsBindingObserver {
             TextField(
               controller: _alertCtl,
               keyboardType: TextInputType.number,
-              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+              inputFormatters: [
+                FilteringTextInputFormatter.digitsOnly,
+                _ThousandsFormatter(),
+              ],
               decoration: const InputDecoration(
                 labelText: '알림 가격',
-                hintText: '이 가격에 도달하면 알림',
+                hintText: '예) 70,000',
+                suffixText: '원',
                 prefixIcon: Icon(Icons.price_check),
                 border: OutlineInputBorder(),
               ),
@@ -391,6 +401,29 @@ class _DetailPageState extends State<DetailPage> with WidgetsBindingObserver {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// 숫자 입력 시 천단위 콤마를 자동으로 붙여주는 포맷터.
+/// - 표시: 1,234,567
+/// - 저장/파싱 시에는 콤마를 제거하고 int로 변환한다.
+class _ThousandsFormatter extends TextInputFormatter {
+  static final _fmt = NumberFormat('#,###');
+
+  @override
+  TextEditingValue formatEditUpdate(
+      TextEditingValue oldValue, TextEditingValue newValue) {
+    final digits = newValue.text.replaceAll(RegExp(r'[^\d]'), '');
+    if (digits.isEmpty) {
+      return const TextEditingValue(text: '');
+    }
+    final n = int.tryParse(digits);
+    if (n == null) return oldValue;
+    final formatted = _fmt.format(n);
+    return TextEditingValue(
+      text: formatted,
+      selection: TextSelection.collapsed(offset: formatted.length),
     );
   }
 }
